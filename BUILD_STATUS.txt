@@ -7,9 +7,12 @@ Included:
 - Thermistor ADC count, node voltage and calculated resistance serial diagnostics.
 - NimBLE GATT service for status, pump commands, user profile and Wi-Fi provisioning.
 - Wi-Fi-only Firebase RTDB REST transport over verified HTTPS.
+- Firebase email/password sign-in, authenticated UID verification and ID-token refresh flow.
+- Refresh token persistence in the `swc-auth` Preferences namespace; NVS encryption is not enabled in the current partition/build configuration.
+- Cloud transport runs in a low-priority worker so HTTP waits do not hold up the pump-control loop.
 - Persistent LittleFS JSONL telemetry queue, bounded size and batch upload.
 - SIM800L remains SMS-only. No cellular internet path.
 
-Before cloud operation, configure DEVICE_ID, FIREBASE_DATABASE_URL, valid authentication, and a trusted Firebase root CA PEM. HTTPS fails closed when the CA placeholder remains. Review Firebase rules and implement command IDs/expiry/acknowledgements before production deployment.
+Before cloud operation, copy the local configuration template, configure the Firebase API key/device login and trusted Firebase root CA PEM, and verify Firebase rules. HTTPS fails closed when the CA placeholder remains. Review NVS encryption and implement command IDs/expiry/acknowledgements before production deployment.
 
-Validation limitation: PlatformIO CLI is unavailable in this environment. This source has not been compiled or hardware-tested. NimBLE API compatibility, BLE security/pairing, Firebase auth, TLS handshake, batch queue recovery, thermistor calibration and pump behaviour require build and bench validation. Do not treat this as production firmware yet.
+Validation limitation: PlatformIO build succeeds in this environment. This source has not been tested on physical hardware. BLE security/pairing, Firebase auth, TLS handshake, NVS encryption, batch queue recovery, thermistor calibration and pump behavior require bench validation. Do not treat this as production firmware yet.

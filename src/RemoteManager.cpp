@@ -9,6 +9,7 @@
 #include <time.h>
 #include <NimBLEDevice.h>
 #include "AppConfig.h"
+#include "FirebaseAuth.h"
 #include "RemoteManager.h"
 
 extern WaterData gWater;
@@ -45,8 +46,7 @@ static QueueHandle_t cloudSnapshotQueue = nullptr;
 
 static String firebaseUrl(const String &path) {
     String url = String(FIREBASE_DATABASE_URL) + path + ".json";
-    if (strlen(FIREBASE_AUTH_TOKEN) > 10 && String(FIREBASE_AUTH_TOKEN) != "REPLACE_WITH_SHORT_LIVED_ID_TOKEN")
-        url += "?auth=" + String(FIREBASE_AUTH_TOKEN);
+    if (firebaseIdToken().length()) url += "?auth=" + firebaseIdToken();
     return url;
 }
 
@@ -68,6 +68,7 @@ static bool httpsRequest(const String &url, const String &method, const String &
     else if (method == "PUT") code = http.PUT(body);
     if (code > 0) response = http.getString();
     http.end();
+    if (code == 401 || code == 403) invalidateFirebaseAuthentication();
     return code >= 200 && code < 300;
 }
 
@@ -224,6 +225,7 @@ static void cloudWorker(void *) {
     bool haveSnapshot = false;
     uint32_t lastSync = 0;
     uint32_t lastPoll = 0;
+    beginFirebaseAuth();
 
     for (;;) {
         CloudSnapshot incoming;
@@ -234,14 +236,15 @@ static void cloudWorker(void *) {
         }
 
         const uint32_t now = millis();
-        if (haveSnapshot && WiFi.status() == WL_CONNECTED &&
+        const bool authenticated = ensureFirebaseAuthentication();
+        if (haveSnapshot && authenticated &&
             (uint32_t)(now - lastSync) >= CLOUD_SYNC_INTERVAL_MS) {
             lastSync = now;
             publishCurrentStatus(latest.water, latest.status);
             uploadTelemetryBatch();
         }
 
-        if (WiFi.status() == WL_CONNECTED &&
+        if (authenticated &&
             (uint32_t)(now - lastPoll) >= CLOUD_COMMAND_POLL_MS) {
             lastPoll = now;
             String response;
