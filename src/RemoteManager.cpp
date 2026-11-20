@@ -26,14 +26,22 @@ static NimBLECharacteristic *statusCharacteristic = nullptr;
 static PumpMode bleMode = AUTO_MODE;
 static bool bleManualPump = false;
 static bool bleClearFault = false;
-static bool bleCommandPending = false;
 static bool bleControlActive = false;
-static uint32_t lastCloudSync = 0;
-static uint32_t lastCommandPoll = 0;
+static PumpMode cloudMode = AUTO_MODE;
+static bool cloudManualPump = false;
+static bool cloudControlActive = false;
 static uint32_t lastNotify = 0;
 static uint32_t recordSequence = 0;
 static bool fsReady = false;
 static Preferences prefs;
+static portMUX_TYPE commandMux = portMUX_INITIALIZER_UNLOCKED;
+
+struct CloudSnapshot {
+    WaterData water;
+    SystemStatus status;
+};
+
+static QueueHandle_t cloudSnapshotQueue = nullptr;
 
 static String firebaseUrl(const String &path) {
     String url = String(FIREBASE_DATABASE_URL) + path + ".json";
@@ -164,13 +172,23 @@ class ControlCallbacks : public NimBLECharacteristicCallbacks {
         StaticJsonDocument<192> doc;
         if (deserializeJson(doc, value)) return;
         const char *mode = doc["mode"] | "";
-        if (!strcmp(mode, "AUTO")) { bleMode = AUTO_MODE; bleManualPump = false; }
-        else if (!strcmp(mode, "OFF")) { bleMode = PUMP_OFF_MODE; bleManualPump = false; }
-        else if (!strcmp(mode, "MANUAL")) { bleMode = MANUAL_MODE; bleManualPump = doc["pump"] | false; }
-        else if (doc["clearFault"] | false) bleClearFault = true;
+        if (doc["clearFault"] | false) {
+            portENTER_CRITICAL(&commandMux);
+            bleClearFault = true;
+            portEXIT_CRITICAL(&commandMux);
+            return;
+        }
+        PumpMode newMode;
+        bool newManualPump = false;
+        if (!strcmp(mode, "AUTO")) newMode = AUTO_MODE;
+        else if (!strcmp(mode, "OFF")) newMode = PUMP_OFF_MODE;
+        else if (!strcmp(mode, "MANUAL")) { newMode = MANUAL_MODE; newManualPump = doc["pump"] | false; }
         else return;
-        bleCommandPending = true;
+        portENTER_CRITICAL(&commandMux);
+        bleMode = newMode;
+        bleManualPump = newManualPump;
         bleControlActive = true;
+        portEXIT_CRITICAL(&commandMux);
     }
 };
 
@@ -201,9 +219,68 @@ class WifiCallbacks : public NimBLECharacteristicCallbacks {
     }
 };
 
+static void cloudWorker(void *) {
+    CloudSnapshot latest{};
+    bool haveSnapshot = false;
+    uint32_t lastSync = 0;
+    uint32_t lastPoll = 0;
+
+    for (;;) {
+        CloudSnapshot incoming;
+        if (cloudSnapshotQueue && xQueueReceive(cloudSnapshotQueue, &incoming, pdMS_TO_TICKS(100)) == pdTRUE) {
+            latest = incoming;
+            haveSnapshot = true;
+            appendTelemetry(latest.water, latest.status);
+        }
+
+        const uint32_t now = millis();
+        if (haveSnapshot && WiFi.status() == WL_CONNECTED &&
+            (uint32_t)(now - lastSync) >= CLOUD_SYNC_INTERVAL_MS) {
+            lastSync = now;
+            publishCurrentStatus(latest.water, latest.status);
+            uploadTelemetryBatch();
+        }
+
+        if (WiFi.status() == WL_CONNECTED &&
+            (uint32_t)(now - lastPoll) >= CLOUD_COMMAND_POLL_MS) {
+            lastPoll = now;
+            String response;
+            if (httpsRequest(firebaseUrl(String("/devices/") + DEVICE_ID + "/commands"), "GET", "", response)) {
+                StaticJsonDocument<256> command;
+                if (!deserializeJson(command, response)) {
+                    const char *mode = command["mode"] | "";
+                    PumpMode newMode;
+                    bool newManualPump = false;
+                    bool valid = true;
+                    if (!strcmp(mode, "AUTO")) newMode = AUTO_MODE;
+                    else if (!strcmp(mode, "OFF")) newMode = PUMP_OFF_MODE;
+                    else if (!strcmp(mode, "MANUAL")) {
+                        newMode = MANUAL_MODE;
+                        newManualPump = command["pump"] | false;
+                    } else valid = false;
+
+                    if (valid) {
+                        portENTER_CRITICAL(&commandMux);
+                        cloudMode = newMode;
+                        cloudManualPump = newManualPump;
+                        cloudControlActive = true;
+                        portEXIT_CRITICAL(&commandMux);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void beginRemoteManager() {
     fsReady = LittleFS.begin(false);
     if (fsReady && !LittleFS.exists(QUEUE_FILE)) { File f = LittleFS.open(QUEUE_FILE, FILE_WRITE); if (f) f.close(); }
+    cloudSnapshotQueue = xQueueCreate(8, sizeof(CloudSnapshot));
+    if (cloudSnapshotQueue) {
+        xTaskCreatePinnedToCore(cloudWorker, "swc-cloud", 8192, nullptr, 1, nullptr, 0);
+    } else {
+        Serial.println("Cloud worker disabled: unable to allocate snapshot queue");
+    }
     if (!BLE_ENABLED) return;
     NimBLEDevice::init("Smart Water Controller");
     NimBLEServer *server = NimBLEDevice::createServer();
@@ -236,30 +313,20 @@ void updateRemoteManager(const WaterData &water, SystemStatus &status) {
         String json; serializeJson(doc, json); statusCharacteristic->setValue(json.c_str());
         statusCharacteristic->notify();
     }
-    if (now - lastCloudSync >= CLOUD_SYNC_INTERVAL_MS) {
-        lastCloudSync = now;
-        appendTelemetry(water, status);
-        if (WiFi.status() == WL_CONNECTED) {
-            publishCurrentStatus(water, status);
-            uploadTelemetryBatch();
-        }
-    }
-    if (WiFi.status() == WL_CONNECTED && now - lastCommandPoll >= CLOUD_COMMAND_POLL_MS) {
-        lastCommandPoll = now;
-        String response;
-        if (httpsRequest(firebaseUrl(String("/devices/") + DEVICE_ID + "/commands"), "GET", "", response)) {
-            StaticJsonDocument<256> command;
-            if (!deserializeJson(command, response)) {
-                const char *mode = command["mode"] | "";
-                if (!strcmp(mode, "AUTO")) { bleMode = AUTO_MODE; bleManualPump = false; bleCommandPending = true; bleControlActive = true; }
-                else if (!strcmp(mode, "OFF")) { bleMode = PUMP_OFF_MODE; bleManualPump = false; bleCommandPending = true; bleControlActive = true; }
-                else if (!strcmp(mode, "MANUAL")) { bleMode = MANUAL_MODE; bleManualPump = command["pump"] | false; bleCommandPending = true; bleControlActive = true; }
-            }
+    static uint32_t lastSnapshot = 0;
+    if (cloudSnapshotQueue && (uint32_t)(now - lastSnapshot) >= CLOUD_SYNC_INTERVAL_MS) {
+        lastSnapshot = now;
+        CloudSnapshot snapshot{water, status};
+        if (xQueueSend(cloudSnapshotQueue, &snapshot, 0) != pdTRUE) {
+            Serial.println("Cloud snapshot queue full; telemetry sample skipped");
         }
     }
 }
 
-PumpMode getBlePumpMode() { return bleMode; }
-bool getBleManualPumpRequest() { return bleManualPump; }
-bool isBleControlActive() { return bleControlActive; }
-bool consumeBleClearFaultRequest() { bool v = bleClearFault; bleClearFault = false; return v; }
+PumpMode getBlePumpMode() { portENTER_CRITICAL(&commandMux); PumpMode v = bleMode; portEXIT_CRITICAL(&commandMux); return v; }
+bool getBleManualPumpRequest() { portENTER_CRITICAL(&commandMux); bool v = bleManualPump; portEXIT_CRITICAL(&commandMux); return v; }
+bool isBleControlActive() { portENTER_CRITICAL(&commandMux); bool v = bleControlActive; portEXIT_CRITICAL(&commandMux); return v; }
+bool consumeBleClearFaultRequest() { portENTER_CRITICAL(&commandMux); bool v = bleClearFault; bleClearFault = false; portEXIT_CRITICAL(&commandMux); return v; }
+PumpMode getCloudPumpMode() { portENTER_CRITICAL(&commandMux); PumpMode v = cloudMode; portEXIT_CRITICAL(&commandMux); return v; }
+bool getCloudManualPumpRequest() { portENTER_CRITICAL(&commandMux); bool v = cloudManualPump; portEXIT_CRITICAL(&commandMux); return v; }
+bool isCloudControlActive() { portENTER_CRITICAL(&commandMux); bool v = cloudControlActive; portEXIT_CRITICAL(&commandMux); return v; }

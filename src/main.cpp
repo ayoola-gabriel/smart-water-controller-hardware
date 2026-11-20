@@ -173,6 +173,9 @@ void loop() {
         if (isBleControlActive()) {
             requestedMode = getBlePumpMode();
             manualPumpRequest = getBleManualPumpRequest();
+        } else if (isCloudControlActive()) {
+            requestedMode = getCloudPumpMode();
+            manualPumpRequest = getCloudManualPumpRequest();
         }
 
         updatePumpController(

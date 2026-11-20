@@ -7,3 +7,6 @@ PumpMode getBlePumpMode();
 bool getBleManualPumpRequest();
 bool isBleControlActive();
 bool consumeBleClearFaultRequest();
+PumpMode getCloudPumpMode();
+bool getCloudManualPumpRequest();
+bool isCloudControlActive();

@@ -107,9 +107,10 @@ This project is generated from the Revision 5 source and updated for Revision 6.
 - Wi-Fi credentials are stored in ESP32 Preferences (NVS). SIM800L remains SMS-only; cellular packet data is not used.
 - Telemetry is appended to LittleFS at `/telemetry.jsonl` and uploaded in batches of up to 20 records to `/devices/DEVICE_ID/history` when Wi-Fi is connected. Records are removed only after a successful Firebase HTTP response. Queue size is bounded by `TELEMETRY_QUEUE_MAX_BYTES`; when full, newest samples are dropped and existing queued data is retained.
 - Latest status is written to `/devices/DEVICE_ID/status`; cloud commands are polled from `/devices/DEVICE_ID/commands`.
+- Cloud HTTP, status publication and queue upload run in a low-priority FreeRTOS worker. The main loop sends snapshots through a bounded queue, keeping network waits off the pump control loop. If that queue fills, the newest snapshot is skipped and a serial message is emitted.
 - Firebase configuration is intentionally fail-closed. HTTPS requests are disabled until a valid root CA PEM and authentication token are configured. Do not use `setInsecure()` or public database write rules. Device credentials belong in the ignored `include/local_config.h`; never commit that file.
 - The profile characteristic currently stores name and phone. APN is intentionally omitted because cellular data has been removed. Wi-Fi provisioning is handled separately.
-- BLE control takes precedence over the legacy local HTTP control API once a BLE command has been received. Restarting the device resets this runtime BLE override to AUTO.
+- BLE control takes precedence over cloud control, which takes precedence over the legacy local HTTP control API after each source has issued a command. Restarting the device resets these runtime overrides.
 - Cloud command polling currently reads the command object; production deployment should add command IDs, expiry timestamps and an acknowledgement/consumption protocol to prevent stale command replay.
 - The first implementation does not include a mobile app; the UUIDs and JSON payloads above are the companion-app contract.
 
