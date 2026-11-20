@@ -59,7 +59,7 @@ constexpr uint16_t WEB_PORT = 80;
 constexpr uint32_t BUZZER_TOGGLE_MS = 250;
 
 
-// Cloud / BLE configuration. Provision credentials securely from the companion app.
+// Cloud / BLE configuration. Secrets are supplied by ignored local_config.h.
 constexpr bool BLE_ENABLED = true;
 constexpr bool FIREBASE_ENABLED = true;
 constexpr char DEVICE_ID[] = "swc-device-001"; // Set a unique ID per controller.

@@ -2,25 +2,94 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
-#include <Preferences.h>
 #include <ArduinoJson.h>
 #include <time.h>
 #include <stdlib.h>
+#include <esp_flash_encrypt.h>
+#include <esp_partition.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 
 #include "AppConfig.h"
 #include "FirebaseAuth.h"
 
 static constexpr char AUTH_NAMESPACE[] = "swc-auth";
 static constexpr char REFRESH_TOKEN_KEY[] = "refresh";
+static constexpr char AUTH_NVS_PARTITION[] = "auth";
+static constexpr char NVS_KEYS_PARTITION[] = "nvs_keys";
 static constexpr uint32_t AUTH_RETRY_DELAY_MS = 60000;
 static constexpr time_t VALID_CLOCK_EPOCH = 1700000000;
 
-static Preferences authPrefs;
 static String currentIdToken;
 static String currentRefreshToken;
 static uint32_t refreshAtMs = 0;
 static uint32_t retryAfterMs = 0;
 static bool ntpStarted = false;
+static bool authNvsReady = false;
+
+static bool saveRefreshToken(const String &token) {
+    if (!authNvsReady) return false;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open_from_partition(AUTH_NVS_PARTITION, AUTH_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return false;
+    err = nvs_set_str(handle, REFRESH_TOKEN_KEY, token.c_str());
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err == ESP_OK;
+}
+
+static void loadRefreshToken() {
+    if (!authNvsReady) return;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open_from_partition(AUTH_NVS_PARTITION, AUTH_NAMESPACE, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return;
+    if (err != ESP_OK) return;
+
+    size_t length = 0;
+    err = nvs_get_str(handle, REFRESH_TOKEN_KEY, nullptr, &length);
+    if (err == ESP_OK && length > 1 && length <= 2048) {
+        char *buffer = static_cast<char *>(malloc(length));
+        if (buffer) {
+            if (nvs_get_str(handle, REFRESH_TOKEN_KEY, buffer, &length) == ESP_OK) {
+                currentRefreshToken = buffer;
+            }
+            free(buffer);
+        }
+    }
+    nvs_close(handle);
+}
+
+static bool initializeEncryptedAuthNvs() {
+    if (!esp_flash_encryption_enabled()) {
+        Serial.println("Firebase auth disabled: ESP32 flash encryption is not enabled");
+        return false;
+    }
+
+    const esp_partition_t *keyPartition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS, NVS_KEYS_PARTITION);
+    if (!keyPartition) {
+        Serial.println("Firebase auth disabled: encrypted NVS key partition is missing");
+        return false;
+    }
+
+    nvs_sec_cfg_t securityConfig{};
+    esp_err_t err = nvs_flash_read_security_cfg(keyPartition, &securityConfig);
+    if (err == ESP_ERR_NVS_KEYS_NOT_INITIALIZED) {
+        err = nvs_flash_generate_keys(keyPartition, &securityConfig);
+    }
+    if (err != ESP_OK) {
+        Serial.printf("Firebase auth disabled: NVS key setup failed (%d)\n", static_cast<int>(err));
+        return false;
+    }
+
+    err = nvs_flash_secure_init_partition(AUTH_NVS_PARTITION, &securityConfig);
+    if (err != ESP_OK) {
+        Serial.printf("Firebase auth disabled: encrypted NVS initialization failed (%d)\n", static_cast<int>(err));
+        return false;
+    }
+    authNvsReady = true;
+    return true;
+}
 static bool ensureClock() {
     if (time(nullptr) >= VALID_CLOCK_EPOCH) {
         return true;
@@ -81,9 +150,12 @@ static String formEncode(const String &value) {
 
 static void clearSavedRefreshToken() {
     currentRefreshToken = "";
-    authPrefs.begin(AUTH_NAMESPACE, false);
-    authPrefs.remove(REFRESH_TOKEN_KEY);
-    authPrefs.end();
+    if (!authNvsReady) return;
+    nvs_handle_t handle;
+    if (nvs_open_from_partition(AUTH_NVS_PARTITION, AUTH_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return;
+    const esp_err_t err = nvs_erase_key(handle, REFRESH_TOKEN_KEY);
+    if (err == ESP_OK) nvs_commit(handle);
+    nvs_close(handle);
 }
 
 static bool acceptTokenResponse(const String &response, const char *uidField) {
@@ -111,12 +183,9 @@ static bool acceptTokenResponse(const String &response, const char *uidField) {
 
     currentIdToken = idToken;
     currentRefreshToken = refreshToken;
-    authPrefs.begin(AUTH_NAMESPACE, false);
-    const size_t stored = authPrefs.putString(REFRESH_TOKEN_KEY, currentRefreshToken);
-    authPrefs.end();
-    if (stored == 0) {
+    if (!saveRefreshToken(currentRefreshToken)) {
         currentIdToken = "";
-        Serial.println("Firebase auth token not retained: NVS write failed");
+        Serial.println("Firebase auth token not retained: encrypted NVS write failed");
         return false;
     }
 
@@ -157,13 +226,11 @@ static bool refreshIdToken() {
 }
 
 void beginFirebaseAuth() {
-    authPrefs.begin(AUTH_NAMESPACE, true);
-    currentRefreshToken = authPrefs.getString(REFRESH_TOKEN_KEY, "");
-    authPrefs.end();
+    if (initializeEncryptedAuthNvs()) loadRefreshToken();
 }
 
 bool ensureFirebaseAuthentication() {
-    if (!FIREBASE_ENABLED || WiFi.status() != WL_CONNECTED) return false;
+    if (!FIREBASE_ENABLED || !authNvsReady || WiFi.status() != WL_CONNECTED) return false;
     if (currentIdToken.length() && static_cast<int32_t>(millis() - refreshAtMs) < 0) return true;
     if (retryAfterMs && static_cast<int32_t>(millis() - retryAfterMs) < 0) return false;
     if (!ensureClock()) {
