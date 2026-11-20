@@ -21,6 +21,8 @@ static const char *CONTROL_UUID = "7c2e0003-7d5a-4f3b-9b2a-5c2d8f001001";
 static const char *PROFILE_UUID = "7c2e0004-7d5a-4f3b-9b2a-5c2d8f001001";
 static const char *WIFI_UUID    = "7c2e0005-7d5a-4f3b-9b2a-5c2d8f001001";
 static const char *QUEUE_FILE = "/telemetry.jsonl";
+static const char *QUEUE_TMP_FILE = "/telemetry.tmp";
+static const char *QUEUE_BACKUP_FILE = "/telemetry.bak";
 static const char *HISTORY_PATH = "/devices/";
 
 static NimBLECharacteristic *statusCharacteristic = nullptr;
@@ -139,11 +141,21 @@ static bool uploadTelemetryBatch() {
     String response;
     const String path = String(HISTORY_PATH) + DEVICE_ID + "/history";
     if (!httpsRequest(firebaseUrl(path), "PATCH", payload, response)) return false;
-    File out = LittleFS.open("/telemetry.tmp", FILE_WRITE);
+    File out = LittleFS.open(QUEUE_TMP_FILE, FILE_WRITE);
     if (!out) return false;
-    out.print(remaining); out.close();
-    LittleFS.remove(QUEUE_FILE);
-    LittleFS.rename("/telemetry.tmp", QUEUE_FILE);
+    const size_t written = out.print(remaining);
+    out.flush();
+    const bool tempWriteOk = written == remaining.length();
+    out.close();
+    if (!tempWriteOk) return false;
+
+    if (LittleFS.exists(QUEUE_BACKUP_FILE) && !LittleFS.remove(QUEUE_BACKUP_FILE)) return false;
+    if (!LittleFS.rename(QUEUE_FILE, QUEUE_BACKUP_FILE)) return false;
+    if (!LittleFS.rename(QUEUE_TMP_FILE, QUEUE_FILE)) {
+        LittleFS.rename(QUEUE_BACKUP_FILE, QUEUE_FILE);
+        return false;
+    }
+    LittleFS.remove(QUEUE_BACKUP_FILE);
     Serial.printf("Firebase: uploaded %u queued telemetry records\\n", count);
     return true;
 }
@@ -346,7 +358,21 @@ static void cloudWorker(void *) {
 
 void beginRemoteManager() {
     fsReady = LittleFS.begin(false);
-    if (fsReady && !LittleFS.exists(QUEUE_FILE)) { File f = LittleFS.open(QUEUE_FILE, FILE_WRITE); if (f) f.close(); }
+    if (fsReady) {
+        if (!LittleFS.exists(QUEUE_FILE) && LittleFS.exists(QUEUE_BACKUP_FILE)) {
+            LittleFS.rename(QUEUE_BACKUP_FILE, QUEUE_FILE);
+        }
+        if (!LittleFS.exists(QUEUE_FILE) && LittleFS.exists(QUEUE_TMP_FILE)) {
+            LittleFS.rename(QUEUE_TMP_FILE, QUEUE_FILE);
+        }
+        if (LittleFS.exists(QUEUE_FILE)) {
+            if (LittleFS.exists(QUEUE_BACKUP_FILE)) LittleFS.remove(QUEUE_BACKUP_FILE);
+            if (LittleFS.exists(QUEUE_TMP_FILE)) LittleFS.remove(QUEUE_TMP_FILE);
+        } else {
+            File f = LittleFS.open(QUEUE_FILE, FILE_WRITE);
+            if (f) f.close();
+        }
+    }
     cloudSnapshotQueue = xQueueCreate(8, sizeof(CloudSnapshot));
     if (cloudSnapshotQueue) {
         xTaskCreatePinnedToCore(cloudWorker, "swc-cloud", 8192, nullptr, 1, nullptr, 0);

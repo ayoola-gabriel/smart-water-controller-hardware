@@ -12,6 +12,7 @@ Included:
 - Cloud transport runs in a low-priority worker so HTTP waits do not hold up the pump-control loop.
 - Cloud commands require an ID and short expiry, are acknowledged before entering the control state, and the last processed ID is persisted to reject replays across restarts.
 - Persistent LittleFS JSONL telemetry queue, bounded size and batch upload.
+- Queue replacement uses temporary and backup files with startup recovery after interrupted swaps.
 - SIM800L remains SMS-only. No cellular internet path.
 
 Before cloud operation, copy the local configuration template, configure the Firebase API key/device login and trusted Firebase root CA PEM, and verify Firebase rules. HTTPS fails closed when the CA placeholder remains. Review NVS encryption and bench-validate command expiry/acknowledgements before production deployment.
