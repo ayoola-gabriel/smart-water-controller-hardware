@@ -54,7 +54,7 @@ All API routes require `?key=YOUR_API_KEY`.
 
 ## 6. Web OTA
 
-1. Copy `include/local_config.example.h` to `include/local_config.h` and set the Wi-Fi credentials, local API key, and Firebase device email/password there. The local file is ignored by Git.
+1. Copy `include/local_config.example.h` to `include/local_config.h` and set the Wi-Fi credentials, local API key, Firebase API key and device email/password, plus a unique six-digit BLE pairing passkey. The local file is ignored by Git.
 2. Connect the ESP32 to the configured Wi-Fi network.
 3. Open `http://ESP32_IP/update?key=YOUR_API_KEY` in a browser on the trusted local network.
 4. Enter the API key in the form, select the compiled `.bin` firmware file and upload.
@@ -102,6 +102,7 @@ This project is generated from the Revision 5 source and updated for Revision 6.
 
 - BLE uses NimBLE-Arduino. Service UUID: `7c2e0001-7d5a-4f3b-9b2a-5c2d8f001001`.
 - Characteristics: status notify/read (`...0002...`), pump control write (`...0003...`), profile write/read (`...0004...`), Wi-Fi provisioning write (`...0005...`).
+- BLE connections require bonding, Secure Connections, MITM authentication and an encrypted link. The configured pairing passkey is shown on the LCD while pairing; the companion client must enter it once before reading status or writing controls. Credentials and profile/Wi-Fi changes are restricted to authenticated links.
 - Pump control JSON examples: `{"mode":"AUTO"}`, `{"mode":"OFF"}`, `{"mode":"MANUAL","pump":true}`, `{"clearFault":true}`.
 - Profile JSON: `{"name":"User","phone":"+234..."}`. Wi-Fi provisioning JSON: `{"ssid":"...","password":"..."}`.
 - Wi-Fi credentials are stored in ESP32 Preferences (NVS). SIM800L remains SMS-only; cellular packet data is not used.

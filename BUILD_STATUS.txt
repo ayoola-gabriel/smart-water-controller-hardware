@@ -6,6 +6,7 @@ Included:
 - NEO-6M UART baud set to 115200 and RX/TX pin mapping corrected to RX=GPIO2, TX=GPIO15 based on the user's successful diagnostic sketch.
 - Thermistor ADC count, node voltage and calculated resistance serial diagnostics.
 - NimBLE GATT service for status, pump commands, user profile and Wi-Fi provisioning.
+- BLE characteristics require authenticated encrypted pairing; a local six-digit passkey is displayed on the LCD during pairing.
 - Wi-Fi-only Firebase RTDB REST transport over verified HTTPS.
 - Firebase email/password sign-in, authenticated UID verification and ID-token refresh flow.
 - Refresh token persistence in a dedicated encrypted NVS partition; Firebase auth fails closed until ESP32 flash encryption is enabled and provisioned.

@@ -11,3 +11,5 @@ constexpr char API_KEY[] = "REPLACE_WITH_RANDOM_LOCAL_API_KEY";
 constexpr char FIREBASE_API_KEY[] = "YOUR_FIREBASE_WEB_API_KEY";
 constexpr char FIREBASE_EMAIL[] = FIREBASE_DEVICE_EMAIL;
 constexpr char FIREBASE_PASSWORD[] = FIREBASE_DEVICE_PASSWORD;
+// Set a unique six-digit passkey per controller before building.
+constexpr uint32_t BLE_PAIRING_PASSKEY = 0;

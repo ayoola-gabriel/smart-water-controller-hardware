@@ -30,6 +30,7 @@ static PumpMode bleMode = AUTO_MODE;
 static bool bleManualPump = false;
 static bool bleClearFault = false;
 static bool bleControlActive = false;
+static bool blePairingPending = false;
 static PumpMode cloudMode = AUTO_MODE;
 static bool cloudManualPump = false;
 static bool cloudControlActive = false;
@@ -47,6 +48,9 @@ struct CloudSnapshot {
 
 static QueueHandle_t cloudSnapshotQueue = nullptr;
 static String lastProcessedCommandId;
+
+static_assert(BLE_PAIRING_PASSKEY >= 100000 && BLE_PAIRING_PASSKEY <= 999999,
+              "Set a unique six-digit BLE_PAIRING_PASSKEY in local_config.h");
 
 static String firebaseUrl(const String &path) {
     String url = String(FIREBASE_DATABASE_URL) + path + ".json";
@@ -234,6 +238,38 @@ class WifiCallbacks : public NimBLECharacteristicCallbacks {
     }
 };
 
+class DeviceServerCallbacks : public NimBLEServerCallbacks {
+    void onConnect(NimBLEServer *, ble_gap_conn_desc *desc) override {
+        portENTER_CRITICAL(&commandMux);
+        blePairingPending = true;
+        portEXIT_CRITICAL(&commandMux);
+        NimBLEDevice::startSecurity(desc->conn_handle);
+    }
+
+    void onDisconnect(NimBLEServer *) override {
+        portENTER_CRITICAL(&commandMux);
+        blePairingPending = false;
+        portEXIT_CRITICAL(&commandMux);
+        NimBLEDevice::getAdvertising()->start();
+    }
+
+    uint32_t onPassKeyRequest() override {
+        return BLE_PAIRING_PASSKEY;
+    }
+
+    void onAuthenticationComplete(ble_gap_conn_desc *desc) override {
+        const bool secured = desc->sec_state.encrypted && desc->sec_state.authenticated;
+        portENTER_CRITICAL(&commandMux);
+        blePairingPending = !secured;
+        portEXIT_CRITICAL(&commandMux);
+        if (!secured) {
+            Serial.println("BLE pairing rejected: authenticated encrypted link required");
+        }
+    }
+};
+
+static DeviceServerCallbacks deviceServerCallbacks;
+
 static bool safeCommandId(const char *id) {
     const size_t length = strlen(id);
     if (!length || length > 64) return false;
@@ -381,12 +417,25 @@ void beginRemoteManager() {
     }
     if (!BLE_ENABLED) return;
     NimBLEDevice::init("Smart Water Controller");
+    NimBLEDevice::setSecurityAuth(true, true, true);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+    NimBLEDevice::setSecurityPasskey(BLE_PAIRING_PASSKEY);
+    NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+    NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
     NimBLEServer *server = NimBLEDevice::createServer();
+    server->setCallbacks(&deviceServerCallbacks, false);
     NimBLEService *service = server->createService(SERVICE_UUID);
-    statusCharacteristic = service->createCharacteristic(STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-    auto *control = service->createCharacteristic(CONTROL_UUID, NIMBLE_PROPERTY::WRITE);
-    auto *profile = service->createCharacteristic(PROFILE_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
-    auto *wifi = service->createCharacteristic(WIFI_UUID, NIMBLE_PROPERTY::WRITE);
+    statusCharacteristic = service->createCharacteristic(STATUS_UUID,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY |
+        NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN);
+    auto *control = service->createCharacteristic(CONTROL_UUID,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN);
+    auto *profile = service->createCharacteristic(PROFILE_UUID,
+        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE |
+        NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::WRITE_ENC |
+        NIMBLE_PROPERTY::READ_AUTHEN | NIMBLE_PROPERTY::WRITE_AUTHEN);
+    auto *wifi = service->createCharacteristic(WIFI_UUID,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN);
     control->setCallbacks(new ControlCallbacks());
     profile->setCallbacks(new ProfileCallbacks());
     wifi->setCallbacks(new WifiCallbacks());
@@ -428,3 +477,5 @@ bool consumeBleClearFaultRequest() { portENTER_CRITICAL(&commandMux); bool v = b
 PumpMode getCloudPumpMode() { portENTER_CRITICAL(&commandMux); PumpMode v = cloudMode; portEXIT_CRITICAL(&commandMux); return v; }
 bool getCloudManualPumpRequest() { portENTER_CRITICAL(&commandMux); bool v = cloudManualPump; portEXIT_CRITICAL(&commandMux); return v; }
 bool isCloudControlActive() { portENTER_CRITICAL(&commandMux); bool v = cloudControlActive; portEXIT_CRITICAL(&commandMux); return v; }
+bool isBlePairingPending() { portENTER_CRITICAL(&commandMux); bool v = blePairingPending; portEXIT_CRITICAL(&commandMux); return v; }
+uint32_t getBlePairingPasskey() { return BLE_PAIRING_PASSKEY; }

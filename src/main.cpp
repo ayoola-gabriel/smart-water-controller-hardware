@@ -66,13 +66,20 @@ static void updateLCD() {
     lcd.print("A       ");
 
     lcd.setCursor(0, 3);
-    lcd.print(gMode == PROTOTYPE_MODE ? "PROTO " : "REAL   ");
-    if (gStatus.temperatureValid) {
-        lcd.print("T:");
-        lcd.print(gStatus.temperatureC, 1);
-        lcd.print("C       ");
+    if (isBlePairingPending()) {
+        lcd.print("BLE PAIR PIN: ");
+        char passkey[7];
+        snprintf(passkey, sizeof(passkey), "%06lu", static_cast<unsigned long>(getBlePairingPasskey()));
+        lcd.print(passkey);
     } else {
-        lcd.print("T:--.-C       ");
+        lcd.print(gMode == PROTOTYPE_MODE ? "PROTO " : "REAL   ");
+        if (gStatus.temperatureValid) {
+            lcd.print("T:");
+            lcd.print(gStatus.temperatureC, 1);
+            lcd.print("C       ");
+        } else {
+            lcd.print("T:--.-C       ");
+        }
     }
 }
 
