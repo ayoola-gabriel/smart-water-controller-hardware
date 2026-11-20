@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
@@ -12,6 +11,7 @@
 
 #include "AppConfig.h"
 #include "FirebaseAuth.h"
+#include "TrustedFirebaseClient.h"
 
 static constexpr char AUTH_NAMESPACE[] = "swc-auth";
 static constexpr char REFRESH_TOKEN_KEY[] = "refresh";
@@ -112,13 +112,11 @@ static bool ensureClock() {
 static bool postAuthRequest(const String &url, const char *contentType,
                             const String &body, String &response) {
     if (WiFi.status() != WL_CONNECTED || !ensureClock()) return false;
-    if (!String(FIREBASE_ROOT_CA).startsWith("-----BEGIN CERTIFICATE-----")) {
-        Serial.println("Firebase auth paused: trusted CA PEM is not configured");
+    TrustedFirebaseClient client;
+    if (!client.useSystemCertificateBundle()) {
+        Serial.println("Firebase auth paused: trusted certificate bundle is unavailable");
         return false;
     }
-
-    WiFiClientSecure client;
-    client.setCACert(FIREBASE_ROOT_CA);
     HTTPClient http;
     http.setTimeout(7000);
     if (!http.begin(client, url)) return false;

@@ -10,6 +10,7 @@
 #include <NimBLEDevice.h>
 #include "AppConfig.h"
 #include "FirebaseAuth.h"
+#include "TrustedFirebaseClient.h"
 #include "RemoteManager.h"
 
 extern WaterData gWater;
@@ -60,12 +61,8 @@ static String firebaseUrl(const String &path) {
 
 static bool httpsRequest(const String &url, const String &method, const String &body, String &response) {
     if (WiFi.status() != WL_CONNECTED) return false;
-    WiFiClientSecure client;
-    if (String(FIREBASE_ROOT_CA).startsWith("-----BEGIN CERTIFICATE-----")) client.setCACert(FIREBASE_ROOT_CA);
-    else {
-        Serial.println("Firebase TLS disabled: install the trusted root CA in AppConfig.h");
-        return false;
-    }
+    TrustedFirebaseClient client;
+    if (!client.useSystemCertificateBundle()) return false;
     HTTPClient http;
     http.setTimeout(5000);
     if (!http.begin(client, url)) return false;
