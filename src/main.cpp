@@ -3,7 +3,6 @@
 #include <LiquidCrystal.h>
 
 #include "AppConfig.h"
-#include "firebase_secrets.h"
 #include "Hardware.h"
 #include "Types.h"
 #include "Sensors.h"

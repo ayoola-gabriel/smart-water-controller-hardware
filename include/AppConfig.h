@@ -1,5 +1,11 @@
 #pragma once
 
+#if __has_include("local_config.h")
+#include "local_config.h"
+#else
+#error "Copy include/local_config.example.h to include/local_config.h and set local credentials."
+#endif
+
 // Revision 6 application configuration. Replace placeholders before deployment.
 constexpr bool RELAY_ACTIVE_LOW = false; // Verify relay module input polarity.
 constexpr uint32_t MODE_SETTLE_MS = 30;
@@ -49,9 +55,6 @@ constexpr bool GPS_ENABLED = true;
 constexpr bool GSM_ENABLED = true;
 constexpr char ALERT_PHONE_NUMBER[] = "+234XXXXXXXXXX";
 constexpr bool WIFI_ENABLED = true;
-constexpr char WIFI_SSID[] = "Ayoola";
-constexpr char WIFI_PASSWORD[] = "1234567890";
-constexpr char API_KEY[] = "12345678901234567890";
 constexpr uint16_t WEB_PORT = 80;
 constexpr uint32_t BUZZER_TOGGLE_MS = 250;
 

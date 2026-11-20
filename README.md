@@ -54,7 +54,7 @@ All API routes require `?key=YOUR_API_KEY`.
 
 ## 6. Web OTA
 
-1. Configure Wi-Fi and a long random API key in `include/AppConfig.h`.
+1. Copy `include/local_config.example.h` to `include/local_config.h` and set the Wi-Fi credentials, local API key, and Firebase device email/password there. The local file is ignored by Git.
 2. Connect the ESP32 to the configured Wi-Fi network.
 3. Open `http://ESP32_IP/update?key=YOUR_API_KEY` in a browser on the trusted local network.
 4. Enter the API key in the form, select the compiled `.bin` firmware file and upload.
@@ -107,7 +107,7 @@ This project is generated from the Revision 5 source and updated for Revision 6.
 - Wi-Fi credentials are stored in ESP32 Preferences (NVS). SIM800L remains SMS-only; cellular packet data is not used.
 - Telemetry is appended to LittleFS at `/telemetry.jsonl` and uploaded in batches of up to 20 records to `/devices/DEVICE_ID/history` when Wi-Fi is connected. Records are removed only after a successful Firebase HTTP response. Queue size is bounded by `TELEMETRY_QUEUE_MAX_BYTES`; when full, newest samples are dropped and existing queued data is retained.
 - Latest status is written to `/devices/DEVICE_ID/status`; cloud commands are polled from `/devices/DEVICE_ID/commands`.
-- Firebase configuration is intentionally fail-closed. HTTPS requests are disabled until a valid root CA PEM and a valid authentication token are configured. Do not use `setInsecure()` or public database write rules. A static long-lived database secret should not be embedded in deployed firmware.
+- Firebase configuration is intentionally fail-closed. HTTPS requests are disabled until a valid root CA PEM and authentication token are configured. Do not use `setInsecure()` or public database write rules. Device credentials belong in the ignored `include/local_config.h`; never commit that file.
 - The profile characteristic currently stores name and phone. APN is intentionally omitted because cellular data has been removed. Wi-Fi provisioning is handled separately.
 - BLE control takes precedence over the legacy local HTTP control API once a BLE command has been received. Restarting the device resets this runtime BLE override to AUTO.
 - Cloud command polling currently reads the command object; production deployment should add command IDs, expiry timestamps and an acknowledgement/consumption protocol to prevent stale command replay.
