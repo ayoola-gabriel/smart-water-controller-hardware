@@ -10,9 +10,10 @@ Included:
 - Firebase email/password sign-in, authenticated UID verification and ID-token refresh flow.
 - Refresh token persistence in the `swc-auth` Preferences namespace; NVS encryption is not enabled in the current partition/build configuration.
 - Cloud transport runs in a low-priority worker so HTTP waits do not hold up the pump-control loop.
+- Cloud commands require an ID and short expiry, are acknowledged before entering the control state, and the last processed ID is persisted to reject replays across restarts.
 - Persistent LittleFS JSONL telemetry queue, bounded size and batch upload.
 - SIM800L remains SMS-only. No cellular internet path.
 
-Before cloud operation, copy the local configuration template, configure the Firebase API key/device login and trusted Firebase root CA PEM, and verify Firebase rules. HTTPS fails closed when the CA placeholder remains. Review NVS encryption and implement command IDs/expiry/acknowledgements before production deployment.
+Before cloud operation, copy the local configuration template, configure the Firebase API key/device login and trusted Firebase root CA PEM, and verify Firebase rules. HTTPS fails closed when the CA placeholder remains. Review NVS encryption and bench-validate command expiry/acknowledgements before production deployment.
 
 Validation limitation: PlatformIO build succeeds in this environment. This source has not been tested on physical hardware. BLE security/pairing, Firebase auth, TLS handshake, NVS encryption, batch queue recovery, thermistor calibration and pump behavior require bench validation. Do not treat this as production firmware yet.

@@ -35,6 +35,7 @@ static uint32_t lastNotify = 0;
 static uint32_t recordSequence = 0;
 static bool fsReady = false;
 static Preferences prefs;
+static Preferences commandPrefs;
 static portMUX_TYPE commandMux = portMUX_INITIALIZER_UNLOCKED;
 
 struct CloudSnapshot {
@@ -43,6 +44,7 @@ struct CloudSnapshot {
 };
 
 static QueueHandle_t cloudSnapshotQueue = nullptr;
+static String lastProcessedCommandId;
 
 static String firebaseUrl(const String &path) {
     String url = String(FIREBASE_DATABASE_URL) + path + ".json";
@@ -220,12 +222,99 @@ class WifiCallbacks : public NimBLECharacteristicCallbacks {
     }
 };
 
+static bool safeCommandId(const char *id) {
+    const size_t length = strlen(id);
+    if (!length || length > 64) return false;
+    for (size_t i = 0; i < length; ++i) {
+        const char ch = id[i];
+        if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+              (ch >= '0' && ch <= '9') || ch == '-' || ch == '_')) return false;
+    }
+    return true;
+}
+
+static bool persistProcessedCommandId(const String &id) {
+    commandPrefs.begin("swc-cmd", false);
+    const size_t written = commandPrefs.putString("lastId", id);
+    commandPrefs.end();
+    return written > 0;
+}
+
+static bool acknowledgeCloudCommand(const String &id, const char *result, const char *reason) {
+    StaticJsonDocument<256> ack;
+    ack["commandId"] = id;
+    ack["status"] = result;
+    ack["reason"] = reason;
+    ack["acknowledgedAt"] = static_cast<uint32_t>(time(nullptr));
+    String body;
+    serializeJson(ack, body);
+    String response;
+    const String path = String("/devices/") + DEVICE_ID + "/commandAcks/" + id;
+    return httpsRequest(firebaseUrl(path), "PUT", body, response);
+}
+
+static void processCloudCommand(const String &payload) {
+    StaticJsonDocument<512> command;
+    if (deserializeJson(command, payload)) return;
+
+    const char *rawId = command["commandId"] | "";
+    if (!safeCommandId(rawId)) {
+        Serial.println("Cloud command ignored: missing or invalid command ID");
+        return;
+    }
+    const String id = rawId;
+    if (id == lastProcessedCommandId) return;
+
+    const time_t now = time(nullptr);
+    const bool hasTimes = command["issuedAt"].is<uint32_t>() && command["expiresAt"].is<uint32_t>();
+    const uint32_t issuedAt = command["issuedAt"] | 0UL;
+    const uint32_t expiresAt = command["expiresAt"] | 0UL;
+    const char *mode = command["mode"] | "";
+    PumpMode newMode = AUTO_MODE;
+    bool newManualPump = false;
+    const char *reason = "invalid_command";
+
+    if (!hasTimes) reason = "missing_timestamps";
+    else if (expiresAt <= issuedAt || expiresAt - issuedAt > CLOUD_COMMAND_MAX_AGE_SEC) reason = "invalid_expiry";
+    else if (issuedAt > static_cast<uint32_t>(now) + CLOUD_COMMAND_FUTURE_SKEW_SEC) reason = "issued_in_future";
+    else if (expiresAt <= static_cast<uint32_t>(now)) reason = "expired";
+    else if (static_cast<uint32_t>(now) > issuedAt &&
+             static_cast<uint32_t>(now) - issuedAt > CLOUD_COMMAND_MAX_AGE_SEC) reason = "too_old";
+    else if (!strcmp(mode, "AUTO")) { newMode = AUTO_MODE; reason = nullptr; }
+    else if (!strcmp(mode, "OFF")) { newMode = PUMP_OFF_MODE; reason = nullptr; }
+    else if (!strcmp(mode, "MANUAL") && command["pump"].is<bool>()) {
+        newMode = MANUAL_MODE;
+        newManualPump = command["pump"].as<bool>();
+        reason = nullptr;
+    } else reason = "invalid_mode_or_pump";
+
+    const bool accepted = reason == nullptr;
+    if (!acknowledgeCloudCommand(id, accepted ? "accepted" : "rejected",
+                                 accepted ? "validated" : reason)) return;
+    if (!persistProcessedCommandId(id)) {
+        Serial.println("Cloud command acknowledged but not applied: command ID could not be saved");
+        return;
+    }
+    lastProcessedCommandId = id;
+
+    if (accepted) {
+        portENTER_CRITICAL(&commandMux);
+        cloudMode = newMode;
+        cloudManualPump = newManualPump;
+        cloudControlActive = true;
+        portEXIT_CRITICAL(&commandMux);
+    }
+}
+
 static void cloudWorker(void *) {
     CloudSnapshot latest{};
     bool haveSnapshot = false;
     uint32_t lastSync = 0;
     uint32_t lastPoll = 0;
     beginFirebaseAuth();
+    commandPrefs.begin("swc-cmd", true);
+    lastProcessedCommandId = commandPrefs.getString("lastId", "");
+    commandPrefs.end();
 
     for (;;) {
         CloudSnapshot incoming;
@@ -249,27 +338,7 @@ static void cloudWorker(void *) {
             lastPoll = now;
             String response;
             if (httpsRequest(firebaseUrl(String("/devices/") + DEVICE_ID + "/commands"), "GET", "", response)) {
-                StaticJsonDocument<256> command;
-                if (!deserializeJson(command, response)) {
-                    const char *mode = command["mode"] | "";
-                    PumpMode newMode;
-                    bool newManualPump = false;
-                    bool valid = true;
-                    if (!strcmp(mode, "AUTO")) newMode = AUTO_MODE;
-                    else if (!strcmp(mode, "OFF")) newMode = PUMP_OFF_MODE;
-                    else if (!strcmp(mode, "MANUAL")) {
-                        newMode = MANUAL_MODE;
-                        newManualPump = command["pump"] | false;
-                    } else valid = false;
-
-                    if (valid) {
-                        portENTER_CRITICAL(&commandMux);
-                        cloudMode = newMode;
-                        cloudManualPump = newManualPump;
-                        cloudControlActive = true;
-                        portEXIT_CRITICAL(&commandMux);
-                    }
-                }
+                processCloudCommand(response);
             }
         }
     }
