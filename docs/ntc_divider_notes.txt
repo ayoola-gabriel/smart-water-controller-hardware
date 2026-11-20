@@ -1,0 +1,7 @@
+NTC DIVIDER — REVISION 5
+
+3V3 -> 10k ohm NTC thermistor (B3950) -> GPIO33 ADC node -> 10k ohm fixed resistor -> GND.
+
+At 25 deg C, nominal NTC resistance is 10k ohm and the GPIO33 node is approximately 1.65V. Firmware samples the ADC and uses the Beta equation with R0=10k ohm, T0=298.15K, and B=3950K.
+
+Use a stable 3.3V rail and preferably a 1% fixed resistor. Validate temperature against a trusted thermometer; NTC tolerance, beta tolerance, ADC nonlinearity, supply variation and self-heating affect accuracy.

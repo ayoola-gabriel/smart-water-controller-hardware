@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100">
+<rect width="1600" height="1100" fill="#f7f9fc"/>
+<text x="800" y="65" text-anchor="middle" font-family="Arial" font-size="38" font-weight="bold" fill="#152238">SMART WATER CONTROLLER — REVISION 6</text>
+<text x="800" y="105" text-anchor="middle" font-family="Arial" font-size="22" fill="#526176">ESP32-WROOM-32 · Updated user pin assignment overview</text>
+<rect x="590" y="170" width="420" height="760" rx="28" fill="#203a5e" stroke="#10243c" stroke-width="5"/>
+<text x="800" y="220" text-anchor="middle" font-family="Arial" font-size="32" font-weight="bold" fill="white">ESP32-WROOM-32</text>
+<g font-family="Arial" font-size="22" fill="white">
+<text x="635" y="295">GPIO4 / GPIO5</text><text x="635" y="340">GPIO21 / 19 / 22 / 23</text>
+<text x="635" y="405">GPIO16 / 17 / 18</text><text x="635" y="460">GPIO2 / GPIO15</text>
+<text x="635" y="525">GPIO13</text><text x="635" y="580">GPIO12</text>
+<text x="635" y="635">GPIO14 / 27 / 26</text><text x="635" y="690">GPIO25</text>
+<text x="635" y="745">GPIO33 / 32</text><text x="635" y="800">GPIO35 / 34 / 36</text><text x="635" y="855">GPIO39</text>
+</g>
+<g stroke-width="4" fill="none">
+<path d="M590 295 H390" stroke="#1b8a70"/><path d="M1010 405 H1210" stroke="#d58b24"/><path d="M1010 460 H1210" stroke="#5b78c8"/><path d="M590 525 H390" stroke="#8b62b5"/><path d="M590 580 H390" stroke="#c65c68"/><path d="M1010 635 H1210" stroke="#2c9a65"/><path d="M1010 690 H1210" stroke="#cc6a32"/><path d="M590 745 H390" stroke="#b18b2d"/><path d="M1010 800 H1210" stroke="#368aaf"/><path d="M1010 855 H1210" stroke="#6e6e6e"/>
+</g>
+<g font-family="Arial" fill="#17263c">
+<rect x="90" y="240" width="300" height="110" rx="16" fill="#e3f3ed" stroke="#1b8a70" stroke-width="3"/><text x="240" y="285" text-anchor="middle" font-size="25" font-weight="bold">20×4 LCD</text><text x="240" y="320" text-anchor="middle" font-size="18">RS=4, EN=5, D4–D7=21,19,22,23</text>
+<rect x="1210" y="350" width="300" height="110" rx="16" fill="#fff0d9" stroke="#d58b24" stroke-width="3"/><text x="1360" y="395" text-anchor="middle" font-size="25" font-weight="bold">SIM800L</text><text x="1360" y="430" text-anchor="middle" font-size="19">TX=16, RX=17, RST=18</text>
+<rect x="1210" y="475" width="300" height="100" rx="16" fill="#e9edfb" stroke="#5b78c8" stroke-width="3"/><text x="1360" y="515" text-anchor="middle" font-size="25" font-weight="bold">NEO-6M GPS</text><text x="1360" y="548" text-anchor="middle" font-size="19">RX=2, TX=15</text>
+<rect x="90" y="465" width="300" height="110" rx="16" fill="#f0eafa" stroke="#8b62b5" stroke-width="3"/><text x="240" y="510" text-anchor="middle" font-size="25" font-weight="bold">Mode select</text><text x="240" y="545" text-anchor="middle" font-size="19">GPIO13 · HIGH proto / LOW real</text>
+<rect x="90" y="600" width="300" height="90" rx="16" fill="#fbe8eb" stroke="#c65c68" stroke-width="3"/><text x="240" y="640" text-anchor="middle" font-size="25" font-weight="bold">Active buzzer</text><text x="240" y="670" text-anchor="middle" font-size="19">GPIO12 · transistor driver</text>
+<rect x="1210" y="590" width="300" height="110" rx="16" fill="#e5f5ec" stroke="#2c9a65" stroke-width="3"/><text x="1360" y="635" text-anchor="middle" font-size="25" font-weight="bold">LEDs</text><text x="1360" y="670" text-anchor="middle" font-size="19">GPIO14, GPIO27, GPIO26</text>
+<rect x="1210" y="715" width="300" height="90" rx="16" fill="#fff0e5" stroke="#cc6a32" stroke-width="3"/><text x="1360" y="755" text-anchor="middle" font-size="25" font-weight="bold">Pump relay input</text><text x="1360" y="785" text-anchor="middle" font-size="19">GPIO25</text>
+<rect x="90" y="720" width="300" height="110" rx="16" fill="#f7f0dc" stroke="#b18b2d" stroke-width="3"/><text x="240" y="765" text-anchor="middle" font-size="25" font-weight="bold">NTC + common</text><text x="240" y="800" text-anchor="middle" font-size="19">NTC=33 · common=32</text>
+<rect x="1210" y="825" width="300" height="110" rx="16" fill="#e5f2f8" stroke="#368aaf" stroke-width="3"/><text x="1360" y="870" text-anchor="middle" font-size="25" font-weight="bold">Level inputs</text><text x="1360" y="905" text-anchor="middle" font-size="19">FULL=35 · MID=34 · LOW=36</text>
+<rect x="1210" y="960" width="300" height="75" rx="16" fill="#ededed" stroke="#6e6e6e" stroke-width="3"/><text x="1360" y="1007" text-anchor="middle" font-size="23" font-weight="bold">Current ADC = GPIO39</text>
+</g>
+<text x="800" y="1010" text-anchor="middle" font-family="Arial" font-size="20" fill="#526176">GPIO32: pulsed 3.3V common for probes; steady 3.3V HIGH for float switches</text>
+<text x="800" y="1050" text-anchor="middle" font-family="Arial" font-size="17" fill="#8b3a3a">Overview only — not a fabrication-ready electrical schematic. Check boot-strapping pins and module logic levels.</text>
+
+<rect x="90" y="960" width="1420" height="105" rx="16" fill="#eef3f8" stroke="#91a4b8" stroke-width="2"/>
+<text x="120" y="1000" font-family="Arial" font-size="20" font-weight="bold" fill="#152238">REVISION 6 NOTES</text>
+<text x="120" y="1035" font-family="Arial" font-size="18" fill="#34465e">Prototype: 3 electrodes (LOW/MID/FULL), pulsed GPIO32, unamplified 4.7Ω shunt to GPIO39. Real: 2 float switches, steady GPIO32, ACS712-30A.</text>
+</svg>
