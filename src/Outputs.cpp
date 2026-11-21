@@ -13,7 +13,12 @@ void beginOutputs() {
     pinMode(PIN_LED_3, OUTPUT);
     pinMode(PIN_BUZZER, OUTPUT);
     digitalWrite(PIN_PUMP_RELAY, RELAY_ACTIVE_LOW ? HIGH : LOW);
-      
+    digitalWrite(PIN_LED_1, HIGH);
+    delay(1000);
+    digitalWrite(PIN_LED_2, HIGH);
+    delay(1000);
+    digitalWrite(PIN_LED_3, HIGH);
+    delay(1000);
     digitalWrite(PIN_LED_1, LOW);
     digitalWrite(PIN_LED_2, LOW);
     digitalWrite(PIN_LED_3, LOW);

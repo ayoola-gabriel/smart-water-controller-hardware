@@ -15,9 +15,9 @@ constexpr uint8_t PIN_MODE_SELECT = 13;
 constexpr uint8_t PIN_PUMP_RELAY = 25;
 
 // Three individually controlled LEDs; colors/functions are configurable in Outputs.cpp.
-constexpr uint8_t PIN_LED_1 = 14;
-constexpr uint8_t PIN_LED_2 = 27;
-constexpr uint8_t PIN_LED_3 = 26;
+constexpr uint8_t PIN_LED_1 = 14; //YEL
+constexpr uint8_t PIN_LED_2 = 26; //GREEN
+constexpr uint8_t PIN_LED_3 = 27;  //RED
 constexpr uint8_t PIN_BUZZER = 12;
 
 // SIM800L module TX -> ESP32 RX GPIO16; module RX <- ESP32 TX GPIO17.
