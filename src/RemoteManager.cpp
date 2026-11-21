@@ -12,6 +12,7 @@
 #include "FirebaseAuth.h"
 #include "TrustedFirebaseClient.h"
 #include "RemoteManager.h"
+#include "WebManager.h"
 
 extern WaterData gWater;
 extern SystemStatus gStatus;
@@ -228,10 +229,18 @@ class WifiCallbacks : public NimBLECharacteristicCallbacks {
         const char *ssid = doc["ssid"] | "";
         const char *password = doc["password"] | "";
         if (!strlen(ssid) || strlen(ssid) > 32 || strlen(password) > 63) return;
-        prefs.begin("swc-net", false);
-        prefs.putString("ssid", ssid); prefs.putString("password", password);
+        if (!prefs.begin("swc-net", false)) {
+            Serial.println("BLE Wi-Fi provisioning failed: Preferences unavailable");
+            return;
+        }
+        const size_t ssidWritten = prefs.putString("ssid", ssid);
+        const size_t passwordWritten = prefs.putString("password", password);
         prefs.end();
-        WiFi.disconnect(); WiFi.begin(ssid, password);
+        if (!ssidWritten || !passwordWritten) {
+            Serial.println("BLE Wi-Fi provisioning failed: credentials were not saved");
+            return;
+        }
+        requestWifiCredentials();
     }
 };
 
@@ -279,7 +288,7 @@ static bool safeCommandId(const char *id) {
 }
 
 static bool persistProcessedCommandId(const String &id) {
-    commandPrefs.begin("swc-cmd", false);
+    if (!commandPrefs.begin("swc-cmd", false)) return false;
     const size_t written = commandPrefs.putString("lastId", id);
     commandPrefs.end();
     return written > 0;
@@ -357,9 +366,13 @@ static void cloudWorker(void *) {
     uint32_t lastSync = 0;
     uint32_t lastPoll = 0;
     beginFirebaseAuth();
-    commandPrefs.begin("swc-cmd", true);
-    lastProcessedCommandId = commandPrefs.getString("lastId", "");
-    commandPrefs.end();
+    if (commandPrefs.begin("swc-cmd", true)) {
+        lastProcessedCommandId = commandPrefs.isKey("lastId")
+            ? commandPrefs.getString("lastId", "") : "";
+        commandPrefs.end();
+    } else {
+        Serial.println("Cloud replay protection unavailable: command Preferences could not open");
+    }
 
     for (;;) {
         CloudSnapshot incoming;

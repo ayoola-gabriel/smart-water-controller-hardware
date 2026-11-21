@@ -14,6 +14,11 @@ static WebServer server(WEB_PORT);
 static PumpMode webPumpMode = AUTO_MODE;
 static bool webManualPumpRequest = false;
 static bool webClearFault = false;
+static bool wifiCredentialChangePending = false;
+static portMUX_TYPE wifiCredentialMux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t lastWifiRetryMs = 0;
+static String wifiSsid;
+static String wifiPassword;
 static bool serverStarted = false;
 static bool otaAuthorizedForUpload = false;
 static bool otaUploadOk = false;
@@ -195,16 +200,44 @@ static void registerRoutes() {
 void beginWebManager() {
     if (!WIFI_ENABLED) return;
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(false);
     Preferences netPrefs;
-    netPrefs.begin("swc-net", true);
-    String ssid = netPrefs.getString("ssid", WIFI_SSID);
-    String password = netPrefs.getString("password", WIFI_PASSWORD);
-    netPrefs.end();
-    WiFi.begin(ssid.c_str(), password.c_str());
+    if (netPrefs.begin("swc-net", true)) {
+        wifiSsid = netPrefs.isKey("ssid") ? netPrefs.getString("ssid", "") : WIFI_SSID;
+        wifiPassword = netPrefs.isKey("password") ? netPrefs.getString("password", "") : WIFI_PASSWORD;
+        netPrefs.end();
+    } else {
+        Serial.println("Wi-Fi Preferences unavailable; using compiled local credentials");
+        wifiSsid = WIFI_SSID;
+        wifiPassword = WIFI_PASSWORD;
+    }
+    WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
+    lastWifiRetryMs = millis();
 }
 
 void handleWebManager() {
     if (!WIFI_ENABLED) return;
+    portENTER_CRITICAL(&wifiCredentialMux);
+    const bool credentialsChanged = wifiCredentialChangePending;
+    wifiCredentialChangePending = false;
+    portEXIT_CRITICAL(&wifiCredentialMux);
+    if (credentialsChanged) {
+        Preferences netPrefs;
+        if (netPrefs.begin("swc-net", true)) {
+            wifiSsid = netPrefs.isKey("ssid") ? netPrefs.getString("ssid", "") : "";
+            wifiPassword = netPrefs.isKey("password") ? netPrefs.getString("password", "") : "";
+            netPrefs.end();
+        }
+        WiFi.disconnect(false, false);
+        WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
+        lastWifiRetryMs = millis();
+    }
+    if (WiFi.status() != WL_CONNECTED && (uint32_t)(millis() - lastWifiRetryMs) >= 15000) {
+        lastWifiRetryMs = millis();
+        if (wifiSsid.length()) WiFi.reconnect();
+        else Serial.println("Wi-Fi reconnect skipped: SSID is not configured");
+    }
     if (WiFi.status() == WL_CONNECTED && !serverStarted) {
         Serial.print("IP:");
         Serial.println(WiFi.localIP());
@@ -217,6 +250,12 @@ void handleWebManager() {
         serverStarted = false;
     }
     if (serverStarted) server.handleClient();
+}
+
+void requestWifiCredentials() {
+    portENTER_CRITICAL(&wifiCredentialMux);
+    wifiCredentialChangePending = true;
+    portEXIT_CRITICAL(&wifiCredentialMux);
 }
 
 void publishWebStatus(const WaterData &, const SystemStatus &) {}

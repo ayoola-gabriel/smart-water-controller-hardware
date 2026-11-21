@@ -61,8 +61,23 @@ static void loadRefreshToken() {
 
 static bool initializeEncryptedAuthNvs() {
     if (!esp_flash_encryption_enabled()) {
-        Serial.println("Firebase auth disabled: ESP32 flash encryption is not enabled");
+#if FIREBASE_REQUIRE_FLASH_ENCRYPTION
+        Serial.println("Firebase auth disabled: production requires ESP32 flash encryption");
         return false;
+#else
+        Serial.println("WARNING: Firebase development mode; refresh token NVS is not protected by flash encryption");
+        const esp_err_t err = nvs_flash_init_partition(AUTH_NVS_PARTITION);
+        if (err != ESP_OK && err != ESP_ERR_NVS_NO_FREE_PAGES && err != ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            Serial.printf("Firebase development NVS initialization failed (%d)\n", static_cast<int>(err));
+            return false;
+        }
+        if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            Serial.println("Firebase auth NVS needs explicit erase/reprovisioning; refusing to erase tokens automatically");
+            return false;
+        }
+        authNvsReady = true;
+        return true;
+#endif
     }
 
     const esp_partition_t *keyPartition = esp_partition_find_first(

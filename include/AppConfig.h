@@ -63,6 +63,11 @@ constexpr uint32_t BUZZER_TOGGLE_MS = 250;
 // Cloud / BLE configuration. Secrets are supplied by ignored local_config.h.
 constexpr bool BLE_ENABLED = true;
 constexpr bool FIREBASE_ENABLED = true;
+// Development permits Firebase auth with plaintext NVS on devices without
+// flash encryption. Set to true in production builds to fail closed instead.
+#ifndef FIREBASE_REQUIRE_FLASH_ENCRYPTION
+#define FIREBASE_REQUIRE_FLASH_ENCRYPTION 0
+#endif
 constexpr char DEVICE_ID[] = "swc-device-001"; // Set a unique ID per controller.
 constexpr char FIREBASE_DEVICE_UID[] = "iunwURhsG8Z35wlyD7hqEJD5e1A2";
 constexpr char FIREBASE_DATABASE_URL[] = "https://smart-water-controller-c2558-default-rtdb.europe-west1.firebasedatabase.app";

@@ -11,5 +11,8 @@ constexpr char API_KEY[] = "REPLACE_WITH_RANDOM_LOCAL_API_KEY";
 constexpr char FIREBASE_API_KEY[] = "YOUR_FIREBASE_WEB_API_KEY";
 constexpr char FIREBASE_EMAIL[] = FIREBASE_DEVICE_EMAIL;
 constexpr char FIREBASE_PASSWORD[] = FIREBASE_DEVICE_PASSWORD;
+// Development default allows Firebase auth without device flash encryption.
+// Set to 1 for production: authentication then fails closed until encryption is provisioned.
+#define FIREBASE_REQUIRE_FLASH_ENCRYPTION 0
 // Set a unique six-digit passkey per controller before building.
 constexpr uint32_t BLE_PAIRING_PASSKEY = 0;
