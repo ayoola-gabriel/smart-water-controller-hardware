@@ -214,9 +214,16 @@ class ProfileCallbacks : public NimBLECharacteristicCallbacks {
         std::string value = c->getValue();
         StaticJsonDocument<384> doc;
         if (deserializeJson(doc, value)) return;
-        prefs.begin("swc-profile", false);
-        if (doc["name"].is<const char*>()) prefs.putString("name", doc["name"].as<String>());
-        if (doc["phone"].is<const char*>()) prefs.putString("phone", doc["phone"].as<String>());
+        if (!prefs.begin("swc-profile", false)) {
+            Serial.println("BLE profile update failed: Preferences unavailable");
+            return;
+        }
+        if (doc["name"].is<const char*>() && strlen(doc["name"].as<const char*>()) <= 48) {
+            prefs.putString("name", doc["name"].as<String>());
+        }
+        if (doc["phone"].is<const char*>() && strlen(doc["phone"].as<const char*>()) <= 24) {
+            prefs.putString("phone", doc["phone"].as<String>());
+        }
         prefs.end();
     }
 };
@@ -249,7 +256,10 @@ class DeviceServerCallbacks : public NimBLEServerCallbacks {
         portENTER_CRITICAL(&commandMux);
         blePairingPending = true;
         portEXIT_CRITICAL(&commandMux);
-        NimBLEDevice::startSecurity(desc->conn_handle);
+        const int securityResult = NimBLEDevice::startSecurity(desc->conn_handle);
+        if (securityResult != 0) {
+            Serial.printf("BLE security negotiation could not start (%d)\n", securityResult);
+        }
     }
 
     void onDisconnect(NimBLEServer *) override {
@@ -268,8 +278,13 @@ class DeviceServerCallbacks : public NimBLEServerCallbacks {
         portENTER_CRITICAL(&commandMux);
         blePairingPending = !secured;
         portEXIT_CRITICAL(&commandMux);
-        if (!secured) {
-            Serial.println("BLE pairing rejected: authenticated encrypted link required");
+        if (secured) {
+            Serial.println("BLE pairing secured with authenticated encryption");
+        } else {
+            Serial.println("BLE pairing failed; removing this peer's bond and disconnecting. Forget the controller on the phone before retrying.");
+            NimBLEDevice::deleteBond(NimBLEAddress(desc->peer_id_addr));
+            NimBLEServer *server = NimBLEDevice::getServer();
+            if (server) server->disconnect(desc->conn_handle);
         }
     }
 };
@@ -445,6 +460,7 @@ void beginRemoteManager() {
     NimBLEDevice::setSecurityPasskey(BLE_PAIRING_PASSKEY);
     NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
     NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+    Serial.printf("BLE bond store loaded: %d paired device(s)\n", NimBLEDevice::getNumBonds());
     NimBLEServer *server = NimBLEDevice::createServer();
     server->setCallbacks(&deviceServerCallbacks, false);
     NimBLEService *service = server->createService(SERVICE_UUID);

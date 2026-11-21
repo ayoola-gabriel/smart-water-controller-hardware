@@ -48,6 +48,9 @@ constexpr float REAL_MIN_RUNNING_CURRENT_A = 0.20f;
 constexpr uint32_t LOW_CURRENT_TRIP_DELAY_MS = 5000;
 
 constexpr uint32_t MAX_PUMP_RUNTIME_MS = 30UL * 60UL * 1000UL;
+constexpr uint32_t FAULT_AUTO_RECOVERY_DELAY_MS = 60000;
+constexpr bool AUTO_RECOVER_MAX_RUNTIME_FAULT = true;
+// Sensor and electrical protection faults remain manual-reset faults.
 constexpr uint32_t PUMP_STARTUP_GRACE_MS = 3000;
 constexpr uint32_t CONTROL_UPDATE_MS = 50;
 constexpr uint32_t DISPLAY_UPDATE_MS = 1000;

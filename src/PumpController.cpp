@@ -6,7 +6,17 @@
 static uint32_t pumpStartMs = 0;
 static uint32_t lowCurrentSinceMs = 0;
 static uint32_t overCurrentSinceMs = 0;
+static uint32_t faultLatchedAtMs = 0;
+static uint32_t lastRecoveryCheckMs = 0;
 static bool lastCommand = false;
+
+static void latchFault(FaultType fault, SystemStatus &status) {
+    if (status.fault == NO_FAULT) {
+        status.fault = fault;
+        faultLatchedAtMs = millis();
+        lastRecoveryCheckMs = faultLatchedAtMs;
+    }
+}
 
 static void commandPump(bool on, SystemStatus &status) {
     status.pumpCommand = on;
@@ -25,8 +35,17 @@ static void commandPump(bool on, SystemStatus &status) {
 
 void clearLatchedFault(SystemStatus &status) {
     status.fault = NO_FAULT;
+    faultLatchedAtMs = 0;
+    lastRecoveryCheckMs = 0;
     status.pumpState = PUMP_STOPPED;
     commandPump(false, status);
+}
+
+static bool runtimeDemandCleared(const WaterData &water, PumpMode mode,
+                                bool manualPumpRequest) {
+    if (mode == PUMP_OFF_MODE) return true;
+    if (mode == MANUAL_MODE) return !manualPumpRequest;
+    return water.levelValid && (water.fullLevel || water.highLevel);
 }
 
 void updatePumpController(
@@ -41,7 +60,7 @@ void updatePumpController(
     status.pumpCurrentA = currentA;
 
     if (!water.levelValid) {
-        status.fault = LEVEL_SENSOR_FAULT;
+        latchFault(LEVEL_SENSOR_FAULT, status);
         commandPump(false, status);
         status.pumpState = PUMP_FAULT;
         return;
@@ -50,13 +69,30 @@ void updatePumpController(
     if (status.fault != NO_FAULT) {
         commandPump(false, status);
         status.pumpState = PUMP_FAULT;
-        return;
+        const uint32_t now = millis();
+        const bool canAutoRecover = status.fault == MAX_RUNTIME_FAULT &&
+                                    AUTO_RECOVER_MAX_RUNTIME_FAULT;
+        if (canAutoRecover && faultLatchedAtMs != 0 &&
+            (uint32_t)(now - faultLatchedAtMs) >= FAULT_AUTO_RECOVERY_DELAY_MS) {
+            if (runtimeDemandCleared(water, requestedMode, manualPumpRequest)) {
+                Serial.println("MAX RUNTIME fault auto-cleared after demand ended");
+                clearLatchedFault(status);
+            } else if ((uint32_t)(now - lastRecoveryCheckMs) >= FAULT_AUTO_RECOVERY_DELAY_MS) {
+                lastRecoveryCheckMs = now;
+                Serial.println("MAX RUNTIME fault persists; pump remains OFF");
+                return;
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
     }
 
     if (status.pumpCommand &&
         pumpStartMs != 0 &&
         millis() - pumpStartMs >= MAX_PUMP_RUNTIME_MS) {
-        status.fault = MAX_RUNTIME_FAULT;
+                latchFault(MAX_RUNTIME_FAULT, status);
         commandPump(false, status);
         status.pumpState = PUMP_FAULT;
         return;
@@ -72,7 +108,7 @@ void updatePumpController(
         if (ENABLE_OVERCURRENT_PROTECTION && currentA > maxCurrent) {
             if (overCurrentSinceMs == 0) overCurrentSinceMs = millis();
             if (millis() - overCurrentSinceMs >= OVERCURRENT_TRIP_DELAY_MS) {
-                status.fault = OVERCURRENT_FAULT;
+                latchFault(OVERCURRENT_FAULT, status);
                 commandPump(false, status);
                 status.pumpState = PUMP_FAULT;
                 return;
@@ -87,7 +123,7 @@ void updatePumpController(
         if (ENABLE_LOW_CURRENT_FAULT && currentA < minCurrent) {
             if (lowCurrentSinceMs == 0) lowCurrentSinceMs = millis();
             if (millis() - lowCurrentSinceMs >= LOW_CURRENT_TRIP_DELAY_MS) {
-                status.fault = LOW_CURRENT_FAULT;
+                latchFault(LOW_CURRENT_FAULT, status);
                 commandPump(false, status);
                 status.pumpState = PUMP_FAULT;
                 return;

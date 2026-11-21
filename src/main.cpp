@@ -26,7 +26,7 @@ static uint32_t lastGpsDiagnosticMs = 0;
 static bool manualPumpRequest = false;
 
 void requestFaultClear() {
-    if (!gWater.levelValid) return;
+    if (!gWater.levelValid || gStatus.pumpCommand) return;
     clearLatchedFault(gStatus);
 }
 
