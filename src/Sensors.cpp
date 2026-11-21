@@ -80,6 +80,7 @@ void updateLevelSensors(OperatingMode mode, WaterData &data) {
 void beginTemperatureSensor() {
     pinMode(PIN_NTC, INPUT);
     analogReadResolution(12);
+    (void)analogRead(PIN_NTC); // Initialize this ADC channel before configuring attenuation.
     analogSetPinAttenuation(PIN_NTC, ADC_11db);
 }
 

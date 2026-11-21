@@ -79,6 +79,14 @@ static bool supabaseRequest(const String &url, const String &method, const Strin
     else if (method == "POST") code = http.POST(body);
     if (code > 0) response = http.getString();
     http.end();
+    if (code < 200 || code >= 300) {
+        const int schemeEnd = url.indexOf("://");
+        const int pathStart = schemeEnd >= 0 ? url.indexOf('/', schemeEnd + 3) : -1;
+        const String endpoint = pathStart >= 0 ? url.substring(pathStart) : String("<invalid-url>");
+        Serial.printf("Supabase %s %s failed: HTTP %d, responseBytes=%u\n",
+                      method.c_str(), endpoint.c_str(), code,
+                      static_cast<unsigned>(response.length()));
+    }
     if (code == 401 || code == 403) invalidateSupabaseAuthentication();
     return code >= 200 && code < 300;
 }
@@ -161,7 +169,7 @@ static bool uploadTelemetryBatch() {
         return false;
     }
     LittleFS.remove(QUEUE_BACKUP_FILE);
-    Serial.printf("Supabase: uploaded %u queued telemetry records\\n", count);
+    Serial.printf("Supabase: uploaded %u queued telemetry records\n", count);
     return true;
 }
 
@@ -187,8 +195,10 @@ static void publishCurrentStatus(const WaterData &w, const SystemStatus &s) {
     row["telemetry"] = doc.as<JsonObject>();
     String payload; serializeJson(row, payload); String response;
     const String url = supabaseUrl(String(STATUS_TABLE_PATH) + "?on_conflict=device_id");
-    supabaseRequest(url, "POST", payload, response,
-                    "resolution=merge-duplicates,return=minimal");
+    if (supabaseRequest(url, "POST", payload, response,
+                        "resolution=merge-duplicates,return=minimal")) {
+        Serial.println("Supabase: current status upsert succeeded");
+    }
 }
 
 class ControlCallbacks : public NimBLECharacteristicCallbacks {

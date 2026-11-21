@@ -33,6 +33,7 @@ static float readAveragedAdcVoltage(uint16_t &rawAverage) {
 void beginCurrentSensor() {
     pinMode(PIN_PUMP_CURRENT, INPUT);
     analogReadResolution(12);
+    (void)analogRead(PIN_PUMP_CURRENT); // Initialize the ADC channel before configuring attenuation.
     analogSetPinAttenuation(PIN_PUMP_CURRENT, ADC_11db);
     (void)analogReadMilliVolts(PIN_PUMP_CURRENT); // discard the first conversion after ADC setup
     prefsReady = prefs.begin("waterctl", false);
