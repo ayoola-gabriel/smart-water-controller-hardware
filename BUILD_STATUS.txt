@@ -10,14 +10,14 @@ Included:
 - Wi-Fi-only Supabase PostgREST transport over HTTPS using the ESP-IDF trusted certificate bundle.
 - Supabase email/password sign-in, authenticated UID verification and access-token refresh flow.
 - Refresh token persistence in `auth` NVS. Development builds allow Supabase Auth with a warning when flash encryption is off; production can require encryption with `CLOUD_REQUIRE_FLASH_ENCRYPTION=1`.
-- Cloud transport, Wi-Fi web server/OTA handling, and GSM SMS work run in background workers so network waits do not hold up the pump-control loop.
+- Cloud transport, Wi-Fi local control server, and GSM SMS work run in background workers so network waits do not hold up the pump-control loop. Firmware updates are USB-only; web OTA is removed.
 - Cloud commands require an ID and short expiry, are acknowledged before entering the control state, and the last processed ID is persisted to reject replays across restarts.
 - Persistent LittleFS JSONL telemetry queue, bounded size and batch upload.
 - Queue replacement uses temporary and backup files with startup recovery after interrupted swaps.
 - SIM800L remains SMS-only. No cellular internet path.
 - Real mode reads LOW/MID/FULL floats on GPIO36/34/35, with active-HIGH polarity confirmed by the user. Invalid patterns latch a sensor fault.
 - Central 20x4 LCD renderer updates only changed characters. Prototype current zero calibration is incremental and only accepted while the pump is OFF.
-- Partition table reserves 128 KB for core dumps and leaves 688 KB for LittleFS; first-use formatting is limited to a failed mount with no prior-mount marker.
+- Single-app partition table provides one 3.125 MB factory application slot, reserves 128 KB for core dumps and leaves 688 KB for LittleFS; first-use formatting is limited to a failed mount with no prior-mount marker.
 - GPS UART Serial2 parser task records raw NMEA and receive/checksum/fix diagnostics.
 - Max-runtime faults can recover after 60 seconds once demand clears; serious sensor/electrical faults remain manual-reset.
 

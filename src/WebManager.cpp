@@ -1,7 +1,6 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WebServer.h>
-#include <Update.h>
 #include <Preferences.h>
 #include "AppConfig.h"
 #include "Types.h"
@@ -23,9 +22,6 @@ static String wifiSsid;
 static String wifiPassword;
 static bool serverStarted = false;
 static bool routesRegistered = false;
-static bool otaAuthorizedForUpload = false;
-static bool otaUploadOk = false;
-static String otaError;
 static void webServerTask(void *parameter);
 
 static void setWebControl(PumpMode mode, bool manualPump) {
@@ -62,7 +58,7 @@ static const char *faultName(FaultType fault) {
 static void registerRoutes() {
     server.on("/", HTTP_GET, []() {
         server.send(200, "text/plain",
-            "Smart Water Controller Revision 6. Endpoints: /api/status, /api/control, /api/fault/clear, /update");
+            "Smart Water Controller Revision 6. Endpoints: /api/status, /api/control, /api/fault/clear");
     });
 
     server.on("/api/status", HTTP_GET, []() {
@@ -154,71 +150,6 @@ static void registerRoutes() {
         server.send(202, "application/json", "{\"accepted\":true,\"note\":\"calibration starts only when pump is OFF and mode is PROTOTYPE\"}");
     });
 
-    // Browser-based OTA page. The API key is submitted as a query parameter
-    // to the POST route; use only on a trusted LAN, not over public Internet.
-    server.on("/update", HTTP_GET, []() {
-        if (!authorized()) {
-            server.send(401, "text/plain", "Unauthorized. Supply the configured API key as ?key=...");
-            return;
-        }
-        const String html = R"HTML(<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Water Controller OTA</title></head><body style="font-family:Arial;max-width:560px;margin:40px auto;padding:16px"><h2>Smart Water Controller — Firmware Update</h2><p>Select a compiled ESP32 firmware .bin file.</p><form id="f" method="POST" action="/update" enctype="multipart/form-data"><label>API key<br><input id="k" type="password" required style="width:100%;padding:10px"></label><p><input type="file" name="firmware" accept=".bin,application/octet-stream" required></p><button style="padding:12px 20px">Upload firmware</button></form><p>Keep the controller powered during the update. It will restart after a successful upload.</p><script>document.getElementById('f').addEventListener('submit',function(e){e.preventDefault();this.action='/update?key='+encodeURIComponent(document.getElementById('k').value);this.submit();});</script></body></html>)HTML";
-        server.send(200, "text/html", html);
-    });
-
-    server.on("/update", HTTP_POST,
-        []() {
-            if (!authorized()) {
-                server.send(401, "application/json", "{\"ok\":false,\"error\":\"unauthorized\"}");
-                return;
-            }
-            if (otaUploadOk && !Update.hasError()) {
-                server.send(200, "application/json", "{\"ok\":true,\"message\":\"Firmware uploaded. Restarting.\"}");
-                delay(700);
-                ESP.restart();
-            } else {
-                String msg = otaError.length() ? otaError : String("Upload failed: ") + Update.errorString();
-                server.send(500, "application/json", String("{\"ok\":false,\"error\":\"") + msg + "\"}");
-            }
-        },
-        []() {
-            HTTPUpload &upload = server.upload();
-            if (upload.status == UPLOAD_FILE_START) {
-                otaAuthorizedForUpload = authorized();
-                otaUploadOk = false;
-                otaError = "";
-                if (!otaAuthorizedForUpload) {
-                    otaError = "Unauthorized";
-                    return;
-                }
-                if (!upload.filename.endsWith(".bin")) {
-                    otaError = "Only .bin firmware files are accepted";
-                    otaAuthorizedForUpload = false;
-                    return;
-                }
-                if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
-                    otaError = String("Unable to begin OTA: ") + Update.errorString();
-                    otaAuthorizedForUpload = false;
-                }
-            } else if (upload.status == UPLOAD_FILE_WRITE) {
-                if (otaAuthorizedForUpload && !otaError.length()) {
-                    const size_t written = Update.write(upload.buf, upload.currentSize);
-                    if (written != upload.currentSize) {
-                        otaError = String("Flash write failed: ") + Update.errorString();
-                        Update.abort();
-                    }
-                }
-            } else if (upload.status == UPLOAD_FILE_END) {
-                if (otaAuthorizedForUpload && !otaError.length()) {
-                    otaUploadOk = Update.end(true);
-                    if (!otaUploadOk) otaError = String("OTA validation failed: ") + Update.errorString();
-                }
-            } else if (upload.status == UPLOAD_FILE_ABORTED) {
-                otaError = "Upload aborted";
-                Update.abort();
-                otaUploadOk = false;
-            }
-        }
-    );
 }
 
 void beginWebManager() {
@@ -242,7 +173,7 @@ void beginWebManager() {
     lastWifiRetryMs = millis();
     if (xTaskCreatePinnedToCore(webServerTask, "swc-web", 6144,
                                 nullptr, 1, nullptr, 0) != pdPASS) {
-        Serial.println("Web server task could not start; web control and OTA unavailable");
+        Serial.println("Web server task could not start; web control unavailable");
     }
 }
 

@@ -1,0 +1,7 @@
+# Name,    Type, SubType, Offset,  Size,     Flags
+nvs,       data, nvs,     0x9000,  0x5000,
+factory,   app,  factory, 0x10000, 0x320000,
+spiffs,    data, spiffs,  0x330000,0x0AC000,
+coredump,  data, coredump,0x3DC000,0x020000,
+auth,      data, nvs,     0x3FC000,0x003000,
+nvs_keys,  data, nvs_keys,0x3FF000,0x001000,encrypted
