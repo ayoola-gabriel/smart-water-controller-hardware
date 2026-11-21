@@ -99,7 +99,6 @@ void setup() {
 void loop() {
     const uint32_t now = millis();
 
-    handleWebManager();
     updateRemoteManager(gWater, gStatus);
     updateGsm();
     gStatus.gsmReady = gsmIsReady();

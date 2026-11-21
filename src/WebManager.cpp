@@ -15,15 +15,25 @@ static PumpMode webPumpMode = AUTO_MODE;
 static bool webManualPumpRequest = false;
 static bool webClearFault = false;
 static bool webCurrentCalibrationRequest = false;
+static portMUX_TYPE webStateMux = portMUX_INITIALIZER_UNLOCKED;
 static bool wifiCredentialChangePending = false;
 static portMUX_TYPE wifiCredentialMux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t lastWifiRetryMs = 0;
 static String wifiSsid;
 static String wifiPassword;
 static bool serverStarted = false;
+static bool routesRegistered = false;
 static bool otaAuthorizedForUpload = false;
 static bool otaUploadOk = false;
 static String otaError;
+static void webServerTask(void *parameter);
+
+static void setWebControl(PumpMode mode, bool manualPump) {
+    portENTER_CRITICAL(&webStateMux);
+    webPumpMode = mode;
+    webManualPumpRequest = manualPump;
+    portEXIT_CRITICAL(&webStateMux);
+}
 
 static bool authorized() {
     return server.hasArg("key") && server.arg("key").length() >= 16 &&
@@ -63,7 +73,10 @@ static void registerRoutes() {
         String json = "{";
         json += "\"firmware\":\"Revision 6\",";
         json += "\"mode\":\"" + String(gStatus.operatingMode == PROTOTYPE_MODE ? "PROTOTYPE" : "REAL") + "\",";
-        json += "\"pumpMode\":\"" + String(modeName(webPumpMode)) + "\",";
+        portENTER_CRITICAL(&webStateMux);
+        const PumpMode modeSnapshot = webPumpMode;
+        portEXIT_CRITICAL(&webStateMux);
+        json += "\"pumpMode\":\"" + String(modeName(modeSnapshot)) + "\",";
         json += "\"pump\":\"" + String(gStatus.pumpCommand ? "ON" : "OFF") + "\",";
         json += "\"pumpState\":\"" + String(gStatus.pumpState == PUMP_FAULT ? "FAULT" : (gStatus.pumpCommand ? "RUNNING" : "STOPPED")) + "\",";
         json += "\"levelPercent\":" + String(gWater.levelPercent, 1) + ",";
@@ -98,11 +111,9 @@ static void registerRoutes() {
         String mode = server.arg("mode");
         mode.toLowerCase();
         if (mode == "auto") {
-            webPumpMode = AUTO_MODE;
-            webManualPumpRequest = false;
+            setWebControl(AUTO_MODE, false);
         } else if (mode == "off") {
-            webPumpMode = PUMP_OFF_MODE;
-            webManualPumpRequest = false;
+            setWebControl(PUMP_OFF_MODE, false);
         } else if (mode == "manual") {
             if (!server.hasArg("pump")) {
                 server.send(400, "application/json", "{\"error\":\"manual mode requires pump=on or pump=off\"}");
@@ -113,8 +124,7 @@ static void registerRoutes() {
                 server.send(400, "application/json", "{\"error\":\"pump must be on or off\"}");
                 return;
             }
-            webPumpMode = MANUAL_MODE;
-            webManualPumpRequest = pump.equalsIgnoreCase("on");
+            setWebControl(MANUAL_MODE, pump.equalsIgnoreCase("on"));
         } else {
             server.send(400, "application/json", "{\"error\":\"invalid mode\"}");
             return;
@@ -127,7 +137,9 @@ static void registerRoutes() {
             server.send(401, "application/json", "{\"error\":\"unauthorized\"}");
             return;
         }
+        portENTER_CRITICAL(&webStateMux);
         webClearFault = true;
+        portEXIT_CRITICAL(&webStateMux);
         server.send(200, "application/json", "{\"accepted\":true}");
     });
 
@@ -136,7 +148,9 @@ static void registerRoutes() {
             server.send(401, "application/json", "{\"error\":\"unauthorized\"}");
             return;
         }
+        portENTER_CRITICAL(&webStateMux);
         webCurrentCalibrationRequest = true;
+        portEXIT_CRITICAL(&webStateMux);
         server.send(202, "application/json", "{\"accepted\":true,\"note\":\"calibration starts only when pump is OFF and mode is PROTOTYPE\"}");
     });
 
@@ -224,9 +238,13 @@ void beginWebManager() {
     }
     WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
     lastWifiRetryMs = millis();
+    if (xTaskCreatePinnedToCore(webServerTask, "swc-web", 6144,
+                                nullptr, 1, nullptr, 0) != pdPASS) {
+        Serial.println("Web server task could not start; web control and OTA unavailable");
+    }
 }
 
-void handleWebManager() {
+static void serviceWebManager() {
     if (!WIFI_ENABLED) return;
     portENTER_CRITICAL(&wifiCredentialMux);
     const bool credentialsChanged = wifiCredentialChangePending;
@@ -251,7 +269,10 @@ void handleWebManager() {
     if (WiFi.status() == WL_CONNECTED && !serverStarted) {
         Serial.print("IP:");
         Serial.println(WiFi.localIP());
-        registerRoutes();
+        if (!routesRegistered) {
+            registerRoutes();
+            routesRegistered = true;
+        }
         server.begin();
         serverStarted = true;
     }
@@ -262,6 +283,13 @@ void handleWebManager() {
     if (serverStarted) server.handleClient();
 }
 
+static void webServerTask(void *) {
+    for (;;) {
+        serviceWebManager();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
 void requestWifiCredentials() {
     portENTER_CRITICAL(&wifiCredentialMux);
     wifiCredentialChangePending = true;
@@ -269,15 +297,29 @@ void requestWifiCredentials() {
 }
 
 void publishWebStatus(const WaterData &, const SystemStatus &) {}
-PumpMode getWebPumpMode() { return webPumpMode; }
-bool getWebManualPumpRequest() { return webManualPumpRequest; }
+PumpMode getWebPumpMode() {
+    portENTER_CRITICAL(&webStateMux);
+    const PumpMode mode = webPumpMode;
+    portEXIT_CRITICAL(&webStateMux);
+    return mode;
+}
+bool getWebManualPumpRequest() {
+    portENTER_CRITICAL(&webStateMux);
+    const bool manualPump = webManualPumpRequest;
+    portEXIT_CRITICAL(&webStateMux);
+    return manualPump;
+}
 bool consumeWebClearFaultRequest() {
-    if (!webClearFault) return false;
+    portENTER_CRITICAL(&webStateMux);
+    const bool request = webClearFault;
     webClearFault = false;
-    return true;
+    portEXIT_CRITICAL(&webStateMux);
+    return request;
 }
 bool consumeWebCurrentCalibrationRequest() {
-    if (!webCurrentCalibrationRequest) return false;
+    portENTER_CRITICAL(&webStateMux);
+    const bool request = webCurrentCalibrationRequest;
     webCurrentCalibrationRequest = false;
-    return true;
+    portEXIT_CRITICAL(&webStateMux);
+    return request;
 }
