@@ -40,4 +40,8 @@ struct SystemStatus {
     double gpsLatitude = 0.0;
     double gpsLongitude = 0.0;
     uint32_t gpsSatellites = 0;
+    uint32_t gpsCharactersReceived = 0;
+    uint32_t gpsValidSentences = 0;
+    uint32_t gpsFailedSentences = 0;
+    uint32_t gpsLastLocationUpdateMs = 0;
 };

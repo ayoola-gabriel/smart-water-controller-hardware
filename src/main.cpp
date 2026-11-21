@@ -24,6 +24,7 @@ static uint32_t lastSensorMs = 0;
 static uint32_t lastTemperatureMs = 0;
 static uint32_t lastControlMs = 0;
 static uint32_t lastDisplayMs = 0;
+static uint32_t lastGpsDiagnosticMs = 0;
 static bool manualPumpRequest = false;
 
 void requestFaultClear() {
@@ -220,6 +221,21 @@ void loop() {
         Serial.printf("NTC: ADC=%u Node=%.3fV Rntc=%.0f ohm TempValid=%d\n",
             gStatus.temperatureRawAdc, gStatus.temperatureNodeV,
             gStatus.thermistorResistanceOhms, gStatus.temperatureValid);
+    }
+
+    if (now - lastGpsDiagnosticMs >= 5000) {
+        lastGpsDiagnosticMs = now;
+        Serial.printf("GPS: chars=%lu validSentences=%lu failedSentences=%lu sats=%lu locationValid=%d lastFixAgeMs=%lu\n",
+            static_cast<unsigned long>(gStatus.gpsCharactersReceived),
+            static_cast<unsigned long>(gStatus.gpsValidSentences),
+            static_cast<unsigned long>(gStatus.gpsFailedSentences),
+            static_cast<unsigned long>(gStatus.gpsSatellites),
+            gStatus.gpsValid,
+            gStatus.gpsLastLocationUpdateMs
+                ? static_cast<unsigned long>(now - gStatus.gpsLastLocationUpdateMs)
+                : 0UL);
+        char nmea[128];
+        if (consumeGpsNmeaLine(nmea, sizeof(nmea))) Serial.printf("GPS NMEA: %s", nmea);
     }
 
     delay(1);
