@@ -13,6 +13,7 @@ constexpr uint8_t LCD_COLS = 20;
 constexpr uint8_t LCD_ROWS = 4;
 
 // Sensor logic: GPIO32 is pulsed in prototype mode and held HIGH in real mode.
+// Hardware verification measured HIGH when a real-mode float is active.
 constexpr uint8_t ELECTRODE_WET_STATE = HIGH;
 constexpr uint8_t FLOAT_ACTIVE_STATE = HIGH;
 constexpr uint32_t SENSOR_UPDATE_MS = 50;

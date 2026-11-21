@@ -30,9 +30,10 @@ void beginLevelSensors(OperatingMode mode) {
         pinMode(PIN_LEVEL_FULL, INPUT);
     } else {
         // Float contacts should connect the steady 3V3 common to each input.
-        // GPIO35/36 have no internal pull-down: fit external 10k pulldowns.
+        // GPIO34/35/36 have no internal pulls: use external pulldowns.
         digitalWrite(PIN_SENSOR_COMMON, HIGH);
         pinMode(PIN_LEVEL_LOW, INPUT);
+        pinMode(PIN_LEVEL_MID, INPUT);
         pinMode(PIN_LEVEL_FULL, INPUT);
     }
 }
@@ -59,15 +60,20 @@ void updateLevelSensors(OperatingMode mode, WaterData &data) {
     }
 
     const bool lowActive = stableRead(PIN_LEVEL_LOW, FLOAT_ACTIVE_STATE);
+    const bool midActive = stableRead(PIN_LEVEL_MID, FLOAT_ACTIVE_STATE);
     const bool fullActive = stableRead(PIN_LEVEL_FULL, FLOAT_ACTIVE_STATE);
     data.lowLevel = lowActive;
+    data.midLevel = midActive;
     data.highLevel = fullActive;
-    data.midLevel = lowActive && !fullActive;
     data.fullLevel = fullActive;
-    data.levelValid = !(!lowActive && fullActive);
-    if (lowActive && fullActive) data.levelPercent = 100;
-    else if (lowActive && !fullActive) data.levelPercent = 50;
-    else if (lowActive) data.levelPercent = 10;
+    data.levelValid = (!midActive || lowActive) && (!fullActive || midActive);
+    if (!data.levelValid) {
+        data.levelPercent = 0;
+        return;
+    }
+    if (fullActive) data.levelPercent = 100;
+    else if (midActive) data.levelPercent = 50;
+    else if (lowActive) data.levelPercent = 25;
     else data.levelPercent = 0;
 }
 

@@ -123,11 +123,12 @@ void updatePumpController(
             commandPump(true, status);
         }
     } else {
-        // Float LOW boolean means low-level demand is ACTIVE.
-        // HIGH boolean means the upper stop threshold is ACTIVE.
+        // Real-mode float switches use the same monotonic wet-level states as
+        // the prototype electrodes: below LOW starts refill, LOW/MID retain
+        // the refill latch, and FULL stops it.
         if (water.highLevel) {
             commandPump(false, status);
-        } else if (water.lowLevel) {
+        } else if (!water.lowLevel) {
             commandPump(true, status);
         }
     }

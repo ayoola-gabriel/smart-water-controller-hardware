@@ -6,6 +6,7 @@
 #include "CurrentSensor.h"
 
 static Preferences prefs;
+static bool prefsReady = false;
 static float prototypeZeroV = PROTOTYPE_ZERO_OFFSET_V_DEFAULT;
 static float currentA = 0.0f;
 static uint32_t lastSampleUs = 0;
@@ -15,10 +16,23 @@ static double sumV = 0.0;
 static double sumV2 = 0.0;
 
 void beginCurrentSensor() {
+    pinMode(PIN_PUMP_CURRENT, INPUT);
     analogReadResolution(12);
     analogSetPinAttenuation(PIN_PUMP_CURRENT, ADC_11db);
-    prefs.begin("waterctl", false);
-    prototypeZeroV = prefs.getFloat("protoZero", PROTOTYPE_ZERO_OFFSET_V_DEFAULT);
+    (void)analogReadMilliVolts(PIN_PUMP_CURRENT); // discard first conversion after ADC setup
+    prefsReady = prefs.begin("waterctl", false);
+    if (!prefsReady) {
+        Serial.println("Preferences unavailable; using default current-sensor calibration");
+    } else if (prefs.isKey("protoZero")) {
+        const float savedZero = prefs.getFloat("protoZero", PROTOTYPE_ZERO_OFFSET_V_DEFAULT);
+        if (isfinite(savedZero) && savedZero >= 0.0f && savedZero <= 3.3f) {
+            prototypeZeroV = savedZero;
+        } else {
+            Serial.println("Invalid saved current zero; using default calibration");
+        }
+    } else {
+        Serial.println("Current zero key absent; using default calibration");
+    }
     lastSampleUs = micros();
     windowStartMs = millis();
 }
@@ -78,7 +92,9 @@ bool calibrateCurrentZero(OperatingMode mode) {
         delay(3);
     }
     prototypeZeroV = (float)(total / n);
-    prefs.putFloat("protoZero", prototypeZeroV);
+    if (prefsReady && prefs.putFloat("protoZero", prototypeZeroV) == 0) {
+        Serial.println("Unable to persist prototype current zero calibration");
+    }
     sumV = 0.0;
     sumV2 = 0.0;
     sampleCount = 0;

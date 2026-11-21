@@ -391,7 +391,15 @@ static void cloudWorker(void *) {
 
 void beginRemoteManager() {
     fsReady = LittleFS.begin(false);
+    Preferences fsPrefs;
+    const bool fsPrefsReady = fsPrefs.begin("swc-fs", false);
+    const bool previouslyMounted = fsPrefsReady && fsPrefs.isKey("mounted");
+    if (!fsReady && fsPrefsReady && !previouslyMounted) {
+        Serial.println("LittleFS first-use mount failed; formatting once for initial recovery");
+        fsReady = LittleFS.format() && LittleFS.begin(false);
+    }
     if (fsReady) {
+        if (fsPrefsReady && !previouslyMounted) fsPrefs.putBool("mounted", true);
         if (!LittleFS.exists(QUEUE_FILE) && LittleFS.exists(QUEUE_BACKUP_FILE)) {
             LittleFS.rename(QUEUE_BACKUP_FILE, QUEUE_FILE);
         }
@@ -405,7 +413,12 @@ void beginRemoteManager() {
             File f = LittleFS.open(QUEUE_FILE, FILE_WRITE);
             if (f) f.close();
         }
+    } else {
+        Serial.println(previouslyMounted
+            ? "LittleFS mount failed after prior use; preserving partition for recovery"
+            : "LittleFS unavailable; offline telemetry queue disabled");
     }
+    if (fsPrefsReady) fsPrefs.end();
     cloudSnapshotQueue = xQueueCreate(8, sizeof(CloudSnapshot));
     if (cloudSnapshotQueue) {
         xTaskCreatePinnedToCore(cloudWorker, "swc-cloud", 8192, nullptr, 1, nullptr, 0);
