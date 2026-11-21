@@ -116,7 +116,7 @@ void loop() {
 
     // Current sampler runs on every loop pass so the ACS712 gets a useful
     // waveform sampling rate for 50Hz RMS estimation.
-    updateCurrentSensor(gMode, gStatus);
+    updateCurrentSensor(gMode, gStatus, !gStatus.pumpCommand);
 
     if (consumeWebCurrentCalibrationRequest()) {
         if (gStatus.pumpCommand) {

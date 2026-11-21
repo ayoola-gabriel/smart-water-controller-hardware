@@ -52,7 +52,14 @@ void beginCurrentSensor() {
     windowStartMs = millis();
 }
 
-void updateCurrentSensor(OperatingMode mode, SystemStatus &status) {
+void updateCurrentSensor(OperatingMode mode, SystemStatus &status, bool pumpOff) {
+    if (calibrating && !pumpOff) {
+        calibrating = false;
+        calibrationSumV = 0.0;
+        calibrationSamples = 0;
+        Serial.println("Current zero calibration cancelled because the pump is ON");
+        return;
+    }
     const uint32_t nowMs = millis();
     const uint32_t nowUs = micros();
     const uint32_t intervalUs = (mode == REAL_MODE) ? 500 : 1000;
