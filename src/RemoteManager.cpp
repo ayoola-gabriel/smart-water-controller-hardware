@@ -84,13 +84,23 @@ static bool supabaseRequest(const String &url, const String &method, const Strin
         const int schemeEnd = url.indexOf("://");
         const int pathStart = schemeEnd >= 0 ? url.indexOf('/', schemeEnd + 3) : -1;
         const String endpoint = pathStart >= 0 ? url.substring(pathStart) : String("<invalid-url>");
-        Serial.printf("Supabase %s %s failed: HTTP %d, responseBytes=%u, internalHeap=%u, largestBlock=%u\n",
+        StaticJsonDocument<384> errorDoc;
+        const bool hasJsonError = !deserializeJson(errorDoc, response);
+        String errorCode = hasJsonError ? String(errorDoc["code"] | "") : "";
+        String errorMessage = hasJsonError ? String(errorDoc["message"] | "") : "";
+        errorMessage.replace('\r', ' ');
+        errorMessage.replace('\n', ' ');
+        if (errorMessage.length() > 140) errorMessage.remove(140);
+        Serial.printf("Supabase %s %s failed: HTTP %d, responseBytes=%u, internalHeap=%u, largestBlock=%u, dbCode=%s, dbMessage=%s\n",
                       method.c_str(), endpoint.c_str(), code,
                       static_cast<unsigned>(response.length()),
                       static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
-                      static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+                      static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                      errorCode.c_str(), errorMessage.c_str());
     }
-    if (code == 401 || code == 403) invalidateSupabaseAuthentication();
+    // 403 means the signed-in user lacks DB permission/RLS access. Preserve
+    // the valid token so a policy fix can take effect without needless re-login.
+    if (code == 401) invalidateSupabaseAuthentication();
     return code >= 200 && code < 300;
 }
 
