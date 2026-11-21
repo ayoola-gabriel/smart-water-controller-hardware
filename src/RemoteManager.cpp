@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 #include <cstring>
 #include <time.h>
 #include <NimBLEDevice.h>
@@ -83,9 +84,11 @@ static bool supabaseRequest(const String &url, const String &method, const Strin
         const int schemeEnd = url.indexOf("://");
         const int pathStart = schemeEnd >= 0 ? url.indexOf('/', schemeEnd + 3) : -1;
         const String endpoint = pathStart >= 0 ? url.substring(pathStart) : String("<invalid-url>");
-        Serial.printf("Supabase %s %s failed: HTTP %d, responseBytes=%u\n",
+        Serial.printf("Supabase %s %s failed: HTTP %d, responseBytes=%u, internalHeap=%u, largestBlock=%u\n",
                       method.c_str(), endpoint.c_str(), code,
-                      static_cast<unsigned>(response.length()));
+                      static_cast<unsigned>(response.length()),
+                      static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                      static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
     }
     if (code == 401 || code == 403) invalidateSupabaseAuthentication();
     return code >= 200 && code < 300;
@@ -125,42 +128,77 @@ static bool uploadTelemetryBatch() {
     if (!fsReady || WiFi.status() != WL_CONNECTED) return false;
     File f = LittleFS.open(QUEUE_FILE, FILE_READ);
     if (!f || f.size() == 0) { if (f) f.close(); return true; }
-    DynamicJsonDocument batch(12288);
-    JsonArray rows = batch.to<JsonArray>();
-    String remaining;
+    String payload;
     uint16_t count = 0;
-    while (f.available()) {
-        String line = f.readStringUntil('\n');
-        line.trim();
-        if (!line.length()) continue;
-        if (count >= TELEMETRY_BATCH_SIZE) { remaining += line + "\n"; continue; }
-        StaticJsonDocument<512> record;
-        if (deserializeJson(record, line)) { remaining += line + "\n"; continue; }
-        const char* recordId = record["id"] | "";
-        String id = recordId;
-        if (id.length() == 0) id = String(millis()) + "-" + String(count);
-        JsonObject row = rows.createNestedObject();
-        row["device_id"] = DEVICE_ID;
-        row["event_id"] = id;
-        row["telemetry"] = record.as<JsonObject>();
-        count++;
+    {
+        // Keep only one small upload batch in RAM. The unsent queue is streamed
+        // to a temporary file after the server confirms this batch.
+        DynamicJsonDocument batch(4096);
+        JsonArray rows = batch.to<JsonArray>();
+        while (f.available() && count < TELEMETRY_BATCH_SIZE) {
+            String line = f.readStringUntil('\n');
+            line.trim();
+            if (!line.length()) continue;
+            StaticJsonDocument<512> record;
+            if (deserializeJson(record, line)) continue; // Invalid rows stay in the source queue.
+            const char *recordId = record["id"] | "";
+            String id = recordId;
+            if (id.length() == 0) id = String(millis()) + "-" + String(count);
+            JsonObject row = rows.createNestedObject();
+            row["device_id"] = DEVICE_ID;
+            row["event_id"] = id;
+            row["telemetry"] = record.as<JsonObject>();
+            count++;
+        }
+        if (batch.overflowed()) {
+            Serial.println("Telemetry batch exceeds its memory budget; queue retained");
+            f.close();
+            return false;
+        }
+        if (count) serializeJson(batch, payload);
     }
-    while (f.available()) remaining += f.readStringUntil('\n') + "\n";
     f.close();
     if (!count) return false;
-    String payload; serializeJson(batch, payload);
     String response;
     const String url = supabaseUrl(String(HISTORY_TABLE_PATH) +
         "?on_conflict=device_id,event_id");
     if (!supabaseRequest(url, "POST", payload, response,
                          "resolution=ignore-duplicates,return=minimal")) return false;
+
+    File source = LittleFS.open(QUEUE_FILE, FILE_READ);
     File out = LittleFS.open(QUEUE_TMP_FILE, FILE_WRITE);
-    if (!out) return false;
-    const size_t written = out.print(remaining);
+    if (!source || !out) {
+        if (source) source.close();
+        if (out) out.close();
+        Serial.println("Telemetry uploaded but queue compaction could not start; originals retained");
+        return false;
+    }
+    uint16_t skipped = 0;
+    bool tempWriteOk = true;
+    while (source.available()) {
+        String line = source.readStringUntil('\n');
+        line.trim();
+        if (!line.length()) continue;
+        StaticJsonDocument<512> record;
+        const bool validRecord = !deserializeJson(record, line);
+        if (validRecord && skipped < count) {
+            skipped++;
+            continue;
+        }
+        const size_t written = out.print(line) + out.write('\n');
+        if (written != line.length() + 1) {
+            tempWriteOk = false;
+            break;
+        }
+    }
+    source.close();
     out.flush();
-    const bool tempWriteOk = written == remaining.length();
     out.close();
-    if (!tempWriteOk) return false;
+    if (!tempWriteOk || skipped != count) {
+        LittleFS.remove(QUEUE_TMP_FILE);
+        Serial.println("Telemetry uploaded but queue compaction failed; original queue retained");
+        return false;
+    }
 
     if (LittleFS.exists(QUEUE_BACKUP_FILE) && !LittleFS.remove(QUEUE_BACKUP_FILE)) return false;
     if (!LittleFS.rename(QUEUE_FILE, QUEUE_BACKUP_FILE)) return false;

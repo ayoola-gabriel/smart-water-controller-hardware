@@ -93,5 +93,5 @@ constexpr uint32_t CLOUD_SYNC_INTERVAL_MS = 15000;
 constexpr uint32_t CLOUD_COMMAND_POLL_MS = 5000;
 constexpr uint32_t CLOUD_COMMAND_MAX_AGE_SEC = 300;
 constexpr uint32_t CLOUD_COMMAND_FUTURE_SKEW_SEC = 60;
-constexpr uint16_t TELEMETRY_BATCH_SIZE = 20;
+constexpr uint16_t TELEMETRY_BATCH_SIZE = 5; // Keep TLS + JSON peak memory modest on ESP32.
 constexpr size_t TELEMETRY_QUEUE_MAX_BYTES = 256 * 1024;
