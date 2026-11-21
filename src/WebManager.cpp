@@ -227,7 +227,9 @@ void beginWebManager() {
     WiFi.setAutoReconnect(true);
     WiFi.persistent(false);
     Preferences netPrefs;
-    if (netPrefs.begin("swc-net", true)) {
+    // Create the namespace on first boot; missing Wi-Fi keys still fall back
+    // to the compiled local credentials below.
+    if (netPrefs.begin("swc-net", false)) {
         wifiSsid = netPrefs.isKey("ssid") ? netPrefs.getString("ssid", "") : WIFI_SSID;
         wifiPassword = netPrefs.isKey("password") ? netPrefs.getString("password", "") : WIFI_PASSWORD;
         netPrefs.end();
@@ -252,7 +254,7 @@ static void serviceWebManager() {
     portEXIT_CRITICAL(&wifiCredentialMux);
     if (credentialsChanged) {
         Preferences netPrefs;
-        if (netPrefs.begin("swc-net", true)) {
+        if (netPrefs.begin("swc-net", false)) {
             wifiSsid = netPrefs.isKey("ssid") ? netPrefs.getString("ssid", "") : "";
             wifiPassword = netPrefs.isKey("password") ? netPrefs.getString("password", "") : "";
             netPrefs.end();

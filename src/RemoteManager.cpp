@@ -411,7 +411,9 @@ static void cloudWorker(void *) {
     uint32_t lastSync = 0;
     uint32_t lastPoll = 0;
     beginSupabaseAuth();
-    if (commandPrefs.begin("swc-cmd", true)) {
+    // Open read/write so a first boot creates the namespace; absent keys remain
+    // normal and are handled with an empty replay ID below.
+    if (commandPrefs.begin("swc-cmd", false)) {
         lastProcessedCommandId = commandPrefs.isKey("lastId")
             ? commandPrefs.getString("lastId", "") : "";
         commandPrefs.end();
@@ -476,7 +478,14 @@ void beginRemoteManager() {
     if (fsPrefsReady) fsPrefs.end();
     cloudSnapshotQueue = xQueueCreate(8, sizeof(CloudSnapshot));
     if (cloudSnapshotQueue) {
-        xTaskCreatePinnedToCore(cloudWorker, "swc-cloud", 8192, nullptr, 1, nullptr, 0);
+        // TLS handshakes, HTTPClient, and JSON parsing use substantial stack.
+        // Keep this worker isolated from the pump-control loop and size it for
+        // the peak HTTPS path instead of risking a canary reset.
+        const BaseType_t taskCreated = xTaskCreatePinnedToCore(
+            cloudWorker, "swc-cloud", 16384, nullptr, 1, nullptr, 0);
+        if (taskCreated != pdPASS) {
+            Serial.println("Cloud worker disabled: task stack allocation failed");
+        }
     } else {
         Serial.println("Cloud worker disabled: unable to allocate snapshot queue");
     }

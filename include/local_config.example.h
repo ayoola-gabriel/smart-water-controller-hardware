@@ -14,5 +14,6 @@ constexpr char API_KEY[] = "REPLACE_WITH_RANDOM_LOCAL_API_KEY";
 // Development allows refresh-token storage without flash encryption, with a warning.
 // Set to 1 for production; cloud auth then fails closed until encryption is provisioned.
 #define CLOUD_REQUIRE_FLASH_ENCRYPTION 0
+
 // Set a unique six-digit passkey per controller before building.
 constexpr uint32_t BLE_PAIRING_PASSKEY = 0;
