@@ -1,4 +1,4 @@
-Revision 6 + BLE / Wi-Fi Firebase development baseline
+Revision 6 + BLE / Wi-Fi Supabase development baseline
 
 Included:
 - Active-HIGH relay retained (RELAY_ACTIVE_LOW=false).
@@ -7,9 +7,9 @@ Included:
 - Thermistor ADC count, node voltage and calculated resistance serial diagnostics.
 - NimBLE GATT service for status, pump commands, user profile and Wi-Fi provisioning. Bonding, Secure Connections, MITM and authenticated-encrypted characteristic permissions are enabled; failed pairing removes only that peer bond.
 - BLE characteristics require authenticated encrypted pairing; a local six-digit passkey is displayed on the LCD during pairing.
-- Wi-Fi-only Firebase RTDB REST transport over HTTPS using the ESP-IDF trusted certificate bundle.
-- Firebase email/password sign-in, authenticated UID verification and ID-token refresh flow.
-- Refresh token persistence in `auth` NVS. Development builds allow Firebase Auth with a warning when flash encryption is off; production can require encryption with `FIREBASE_REQUIRE_FLASH_ENCRYPTION=1`.
+- Wi-Fi-only Supabase PostgREST transport over HTTPS using the ESP-IDF trusted certificate bundle.
+- Supabase email/password sign-in, authenticated UID verification and access-token refresh flow.
+- Refresh token persistence in `auth` NVS. Development builds allow Supabase Auth with a warning when flash encryption is off; production can require encryption with `CLOUD_REQUIRE_FLASH_ENCRYPTION=1`.
 - Cloud transport, Wi-Fi web server/OTA handling, and GSM SMS work run in background workers so network waits do not hold up the pump-control loop.
 - Cloud commands require an ID and short expiry, are acknowledged before entering the control state, and the last processed ID is persisted to reject replays across restarts.
 - Persistent LittleFS JSONL telemetry queue, bounded size and batch upload.
@@ -21,6 +21,6 @@ Included:
 - GPS UART Serial2 parser task records raw NMEA and receive/checksum/fix diagnostics.
 - Max-runtime faults can recover after 60 seconds once demand clears; serious sensor/electrical faults remain manual-reset.
 
-Before cloud operation, copy the local configuration template and set the Firebase API key/device login and unique BLE passkey. Development configuration allows auth without flash encryption but leaves refresh tokens unencrypted; set `FIREBASE_REQUIRE_FLASH_ENCRYPTION=1` and complete device-security provisioning for production. Back up LittleFS and flash the updated partition table over USB before firmware.
+Before cloud operation, run `supabase/schema.sql`, create/register the device Auth user, and configure the Supabase project URL, publishable/anon key, login and user UUID in the ignored local configuration. Development configuration allows auth without flash encryption but leaves refresh tokens unencrypted; set `CLOUD_REQUIRE_FLASH_ENCRYPTION=1` and complete device-security provisioning for production. Back up LittleFS and flash the updated partition table over USB before firmware.
 
-Validation limitation: PlatformIO build succeeds. The user reports prior hardware checks passed for firmware upload, supply, prototype water sensing, prototype AUTO pump, LEDs, basic LCD, thermistor measurement and Wi-Fi association. The new corrections have not yet been retested. Firebase auth/TLS, bond pairing, core-dump operation, fault recovery, GPS parser diagnostics and real-mode float/current behavior remain unverified. Do not proceed to real mains pump testing.
+Validation limitation: PlatformIO build succeeds. The user reports prior hardware checks passed for firmware upload, supply, prototype water sensing, prototype AUTO pump, LEDs, basic LCD, thermistor measurement and Wi-Fi association. The new corrections have not yet been retested. Supabase Auth/PostgREST/RLS, bond pairing, core-dump operation, fault recovery, GPS parser diagnostics and real-mode float/current behavior remain unverified. Do not proceed to real mains pump testing.

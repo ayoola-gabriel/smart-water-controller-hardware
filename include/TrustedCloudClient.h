@@ -4,7 +4,7 @@
 #include "sdkconfig.h"
 #include "ssl_client.h"
 
-class TrustedFirebaseClient : public WiFiClientSecure {
+class TrustedCloudClient : public WiFiClientSecure {
 public:
     bool useSystemCertificateBundle() {
 #if CONFIG_MBEDTLS_CERTIFICATE_BUNDLE

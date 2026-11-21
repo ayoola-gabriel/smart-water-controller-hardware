@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
 #include <Preferences.h>
@@ -9,8 +8,8 @@
 #include <time.h>
 #include <NimBLEDevice.h>
 #include "AppConfig.h"
-#include "FirebaseAuth.h"
-#include "TrustedFirebaseClient.h"
+#include "SupabaseAuth.h"
+#include "TrustedCloudClient.h"
 #include "RemoteManager.h"
 #include "WebManager.h"
 
@@ -25,7 +24,9 @@ static const char *WIFI_UUID    = "7c2e0005-7d5a-4f3b-9b2a-5c2d8f001001";
 static const char *QUEUE_FILE = "/telemetry.jsonl";
 static const char *QUEUE_TMP_FILE = "/telemetry.tmp";
 static const char *QUEUE_BACKUP_FILE = "/telemetry.bak";
-static const char *HISTORY_PATH = "/devices/";
+static const char *STATUS_TABLE_PATH = "/rest/v1/device_status";
+static const char *HISTORY_TABLE_PATH = "/rest/v1/telemetry_history";
+static const char *COMMAND_TABLE_PATH = "/rest/v1/device_commands";
 
 static NimBLECharacteristic *statusCharacteristic = nullptr;
 static PumpMode bleMode = AUTO_MODE;
@@ -54,27 +55,31 @@ static String lastProcessedCommandId;
 static_assert(BLE_PAIRING_PASSKEY >= 100000 && BLE_PAIRING_PASSKEY <= 999999,
               "Set a unique six-digit BLE_PAIRING_PASSKEY in local_config.h");
 
-static String firebaseUrl(const String &path) {
-    String url = String(FIREBASE_DATABASE_URL) + path + ".json";
-    if (firebaseIdToken().length()) url += "?auth=" + firebaseIdToken();
-    return url;
+static String supabaseUrl(const String &path) {
+    String base = SUPABASE_PROJECT_URL;
+    while (base.endsWith("/")) base.remove(base.length() - 1);
+    return base + path;
 }
 
-static bool httpsRequest(const String &url, const String &method, const String &body, String &response) {
-    if (WiFi.status() != WL_CONNECTED) return false;
-    TrustedFirebaseClient client;
+static bool supabaseRequest(const String &url, const String &method, const String &body,
+                            String &response, const char *prefer = "return=minimal") {
+    if (WiFi.status() != WL_CONNECTED || !supabaseAccessToken().length()) return false;
+    TrustedCloudClient client;
     if (!client.useSystemCertificateBundle()) return false;
     HTTPClient http;
     http.setTimeout(5000);
     if (!http.begin(client, url)) return false;
+    http.addHeader("apikey", SUPABASE_ANON_KEY);
+    http.addHeader("Authorization", String("Bearer ") + supabaseAccessToken());
     http.addHeader("Content-Type", "application/json");
+    if (prefer && prefer[0]) http.addHeader("Prefer", prefer);
     int code = -1;
     if (method == "GET") code = http.GET();
     else if (method == "PATCH") code = http.sendRequest("PATCH", (uint8_t *)body.c_str(), body.length());
-    else if (method == "PUT") code = http.PUT(body);
+    else if (method == "POST") code = http.POST(body);
     if (code > 0) response = http.getString();
     http.end();
-    if (code == 401 || code == 403) invalidateFirebaseAuthentication();
+    if (code == 401 || code == 403) invalidateSupabaseAuthentication();
     return code >= 200 && code < 300;
 }
 
@@ -113,7 +118,7 @@ static bool uploadTelemetryBatch() {
     File f = LittleFS.open(QUEUE_FILE, FILE_READ);
     if (!f || f.size() == 0) { if (f) f.close(); return true; }
     DynamicJsonDocument batch(12288);
-    JsonObject root = batch.to<JsonObject>();
+    JsonArray rows = batch.to<JsonArray>();
     String remaining;
     uint16_t count = 0;
     while (f.available()) {
@@ -125,15 +130,11 @@ static bool uploadTelemetryBatch() {
         if (deserializeJson(record, line)) { remaining += line + "\n"; continue; }
         const char* recordId = record["id"] | "";
         String id = recordId;
-
-        if (id.length() == 0) {
-            id = String(millis());
-            id += "_";
-            id += String(count);
-        }
-        id.replace(".", "_"); id.replace("$", "_"); id.replace("#", "_");
-        id.replace("[", "_"); id.replace("]", "_"); id.replace("/", "_");
-        root[id] = record.as<JsonObject>();
+        if (id.length() == 0) id = String(millis()) + "-" + String(count);
+        JsonObject row = rows.createNestedObject();
+        row["device_id"] = DEVICE_ID;
+        row["event_id"] = id;
+        row["telemetry"] = record.as<JsonObject>();
         count++;
     }
     while (f.available()) remaining += f.readStringUntil('\n') + "\n";
@@ -141,8 +142,10 @@ static bool uploadTelemetryBatch() {
     if (!count) return false;
     String payload; serializeJson(batch, payload);
     String response;
-    const String path = String(HISTORY_PATH) + DEVICE_ID + "/history";
-    if (!httpsRequest(firebaseUrl(path), "PATCH", payload, response)) return false;
+    const String url = supabaseUrl(String(HISTORY_TABLE_PATH) +
+        "?on_conflict=device_id,event_id");
+    if (!supabaseRequest(url, "POST", payload, response,
+                         "resolution=ignore-duplicates,return=minimal")) return false;
     File out = LittleFS.open(QUEUE_TMP_FILE, FILE_WRITE);
     if (!out) return false;
     const size_t written = out.print(remaining);
@@ -158,7 +161,7 @@ static bool uploadTelemetryBatch() {
         return false;
     }
     LittleFS.remove(QUEUE_BACKUP_FILE);
-    Serial.printf("Firebase: uploaded %u queued telemetry records\\n", count);
+    Serial.printf("Supabase: uploaded %u queued telemetry records\\n", count);
     return true;
 }
 
@@ -179,8 +182,13 @@ static void publishCurrentStatus(const WaterData &w, const SystemStatus &s) {
     doc["uptimeMs"] = millis();
     const time_t epochNow = time(nullptr);
     if (epochNow > 1700000000) doc["timestamp"] = static_cast<uint32_t>(epochNow);
-    String payload; serializeJson(doc, payload); String response;
-    httpsRequest(firebaseUrl(String("/devices/") + DEVICE_ID + "/status"), "PUT", payload, response);
+    StaticJsonDocument<1024> row;
+    row["device_id"] = DEVICE_ID;
+    row["telemetry"] = doc.as<JsonObject>();
+    String payload; serializeJson(row, payload); String response;
+    const String url = supabaseUrl(String(STATUS_TABLE_PATH) + "?on_conflict=device_id");
+    supabaseRequest(url, "POST", payload, response,
+                    "resolution=merge-duplicates,return=minimal");
 }
 
 class ControlCallbacks : public NimBLECharacteristicCallbacks {
@@ -310,35 +318,46 @@ static bool persistProcessedCommandId(const String &id) {
 }
 
 static bool acknowledgeCloudCommand(const String &id, const char *result, const char *reason) {
-    StaticJsonDocument<256> ack;
-    ack["commandId"] = id;
+    StaticJsonDocument<192> ack;
     ack["status"] = result;
     ack["reason"] = reason;
-    ack["acknowledgedAt"] = static_cast<uint32_t>(time(nullptr));
+    ack["acknowledged_at"] = static_cast<uint32_t>(time(nullptr));
     String body;
     serializeJson(ack, body);
     String response;
-    const String path = String("/devices/") + DEVICE_ID + "/commandAcks/" + id;
-    return httpsRequest(firebaseUrl(path), "PUT", body, response);
+    const String url = supabaseUrl(String(COMMAND_TABLE_PATH) +
+        "?command_id=eq." + id + "&device_id=eq." + DEVICE_ID + "&status=eq.pending");
+    if (!supabaseRequest(url, "PATCH", body, response, "return=representation")) return false;
+    DynamicJsonDocument updated(1024);
+    return !deserializeJson(updated, response) && updated.is<JsonArray>() &&
+           updated.as<JsonArray>().size() > 0;
 }
 
 static void processCloudCommand(const String &payload) {
-    StaticJsonDocument<512> command;
-    if (deserializeJson(command, payload)) return;
+    StaticJsonDocument<2048> responseDoc;
+    if (deserializeJson(responseDoc, payload) || !responseDoc.is<JsonArray>()) return;
+    JsonArray commands = responseDoc.as<JsonArray>();
+    if (commands.size() == 0 || !commands[0].is<JsonObject>()) return;
+    JsonObject command = commands[0].as<JsonObject>();
 
-    const char *rawId = command["commandId"] | "";
+    const char *rawId = command["command_id"] | command["commandId"] | "";
     if (!safeCommandId(rawId)) {
-        Serial.println("Cloud command ignored: missing or invalid command ID");
+        Serial.println("Supabase command ignored: missing or invalid command ID");
         return;
     }
     const String id = rawId;
     if (id == lastProcessedCommandId) return;
 
     const time_t now = time(nullptr);
-    const bool hasTimes = command["issuedAt"].is<uint32_t>() && command["expiresAt"].is<uint32_t>();
-    const uint32_t issuedAt = command["issuedAt"] | 0UL;
-    const uint32_t expiresAt = command["expiresAt"] | 0UL;
-    const char *mode = command["mode"] | "";
+    JsonVariantConst issued = command["issued_at"];
+    if (issued.isNull()) issued = command["issuedAt"];
+    JsonVariantConst expires = command["expires_at"];
+    if (expires.isNull()) expires = command["expiresAt"];
+    const bool hasTimes = !issued.isNull() && !expires.isNull();
+    const uint32_t issuedAt = issued.as<uint32_t>();
+    const uint32_t expiresAt = expires.as<uint32_t>();
+    String mode = command["mode"] | "";
+    mode.toUpperCase();
     PumpMode newMode = AUTO_MODE;
     bool newManualPump = false;
     const char *reason = "invalid_command";
@@ -349,9 +368,9 @@ static void processCloudCommand(const String &payload) {
     else if (expiresAt <= static_cast<uint32_t>(now)) reason = "expired";
     else if (static_cast<uint32_t>(now) > issuedAt &&
              static_cast<uint32_t>(now) - issuedAt > CLOUD_COMMAND_MAX_AGE_SEC) reason = "too_old";
-    else if (!strcmp(mode, "AUTO")) { newMode = AUTO_MODE; reason = nullptr; }
-    else if (!strcmp(mode, "OFF")) { newMode = PUMP_OFF_MODE; reason = nullptr; }
-    else if (!strcmp(mode, "MANUAL") && command["pump"].is<bool>()) {
+    else if (mode == "AUTO") { newMode = AUTO_MODE; reason = nullptr; }
+    else if (mode == "OFF") { newMode = PUMP_OFF_MODE; reason = nullptr; }
+    else if (mode == "MANUAL" && command["pump"].is<bool>()) {
         newMode = MANUAL_MODE;
         newManualPump = command["pump"].as<bool>();
         reason = nullptr;
@@ -359,9 +378,12 @@ static void processCloudCommand(const String &payload) {
 
     const bool accepted = reason == nullptr;
     if (!acknowledgeCloudCommand(id, accepted ? "accepted" : "rejected",
-                                 accepted ? "validated" : reason)) return;
+                                 accepted ? "validated" : reason)) {
+        Serial.println("Supabase command acknowledgement failed; command not applied");
+        return;
+    }
     if (!persistProcessedCommandId(id)) {
-        Serial.println("Cloud command acknowledged but not applied: command ID could not be saved");
+        Serial.println("Supabase command acknowledged but not applied: command ID could not be saved");
         return;
     }
     lastProcessedCommandId = id;
@@ -375,12 +397,20 @@ static void processCloudCommand(const String &payload) {
     }
 }
 
+static void pollSupabaseCommand() {
+    const String url = supabaseUrl(String(COMMAND_TABLE_PATH) +
+        "?select=command_id,issued_at,expires_at,mode,pump" \
+        "&device_id=eq." + DEVICE_ID + "&status=eq.pending&order=issued_at.asc&limit=1");
+    String response;
+    if (supabaseRequest(url, "GET", "", response)) processCloudCommand(response);
+}
+
 static void cloudWorker(void *) {
     CloudSnapshot latest{};
     bool haveSnapshot = false;
     uint32_t lastSync = 0;
     uint32_t lastPoll = 0;
-    beginFirebaseAuth();
+    beginSupabaseAuth();
     if (commandPrefs.begin("swc-cmd", true)) {
         lastProcessedCommandId = commandPrefs.isKey("lastId")
             ? commandPrefs.getString("lastId", "") : "";
@@ -398,7 +428,7 @@ static void cloudWorker(void *) {
         }
 
         const uint32_t now = millis();
-        const bool authenticated = ensureFirebaseAuthentication();
+        const bool authenticated = ensureSupabaseAuthentication();
         if (haveSnapshot && authenticated &&
             (uint32_t)(now - lastSync) >= CLOUD_SYNC_INTERVAL_MS) {
             lastSync = now;
@@ -409,10 +439,7 @@ static void cloudWorker(void *) {
         if (authenticated &&
             (uint32_t)(now - lastPoll) >= CLOUD_COMMAND_POLL_MS) {
             lastPoll = now;
-            String response;
-            if (httpsRequest(firebaseUrl(String("/devices/") + DEVICE_ID + "/commands"), "GET", "", response)) {
-                processCloudCommand(response);
-            }
+            pollSupabaseCommand();
         }
     }
 }

@@ -6,6 +6,25 @@
 #error "Copy include/local_config.example.h to include/local_config.h and set local credentials."
 #endif
 
+#ifndef SUPABASE_PROJECT_URL
+#define SUPABASE_PROJECT_URL "https://YOUR_PROJECT_REF.supabase.co"
+#endif
+#ifndef SUPABASE_ANON_KEY
+#define SUPABASE_ANON_KEY "YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY"
+#endif
+#ifndef SUPABASE_DEVICE_EMAIL
+#define SUPABASE_DEVICE_EMAIL "YOUR_SUPABASE_DEVICE_EMAIL"
+#endif
+#ifndef SUPABASE_DEVICE_PASSWORD
+#define SUPABASE_DEVICE_PASSWORD "YOUR_SUPABASE_DEVICE_PASSWORD"
+#endif
+#ifndef SUPABASE_DEVICE_UID
+#define SUPABASE_DEVICE_UID "YOUR_SUPABASE_AUTH_USER_UUID"
+#endif
+#ifndef CLOUD_REQUIRE_FLASH_ENCRYPTION
+#define CLOUD_REQUIRE_FLASH_ENCRYPTION 0
+#endif
+
 // Revision 6 application configuration. Replace placeholders before deployment.
 constexpr bool RELAY_ACTIVE_LOW = false; // Verify relay module input polarity.
 constexpr uint32_t MODE_SETTLE_MS = 30;
@@ -66,17 +85,10 @@ constexpr uint16_t WEB_PORT = 80;
 constexpr uint32_t BUZZER_TOGGLE_MS = 250;
 
 
-// Cloud / BLE configuration. Secrets are supplied by ignored local_config.h.
+// Cloud / BLE configuration. Supabase credentials are supplied by ignored local_config.h.
 constexpr bool BLE_ENABLED = true;
-constexpr bool FIREBASE_ENABLED = true;
-// Development permits Firebase auth with plaintext NVS on devices without
-// flash encryption. Set to true in production builds to fail closed instead.
-#ifndef FIREBASE_REQUIRE_FLASH_ENCRYPTION
-#define FIREBASE_REQUIRE_FLASH_ENCRYPTION 0
-#endif
+constexpr bool SUPABASE_ENABLED = true;
 constexpr char DEVICE_ID[] = "swc-device-001"; // Set a unique ID per controller.
-constexpr char FIREBASE_DEVICE_UID[] = "iunwURhsG8Z35wlyD7hqEJD5e1A2";
-constexpr char FIREBASE_DATABASE_URL[] = "https://smart-water-controller-c2558-default-rtdb.europe-west1.firebasedatabase.app";
 constexpr uint32_t CLOUD_SYNC_INTERVAL_MS = 15000;
 constexpr uint32_t CLOUD_COMMAND_POLL_MS = 5000;
 constexpr uint32_t CLOUD_COMMAND_MAX_AGE_SEC = 300;

@@ -10,8 +10,8 @@
 #include <nvs_flash.h>
 
 #include "AppConfig.h"
-#include "FirebaseAuth.h"
-#include "TrustedFirebaseClient.h"
+#include "SupabaseAuth.h"
+#include "TrustedCloudClient.h"
 
 static constexpr char AUTH_NAMESPACE[] = "swc-auth";
 static constexpr char REFRESH_TOKEN_KEY[] = "refresh";
@@ -20,12 +20,18 @@ static constexpr char NVS_KEYS_PARTITION[] = "nvs_keys";
 static constexpr uint32_t AUTH_RETRY_DELAY_MS = 60000;
 static constexpr time_t VALID_CLOCK_EPOCH = 1700000000;
 
-static String currentIdToken;
+static String currentAccessToken;
 static String currentRefreshToken;
 static uint32_t refreshAtMs = 0;
 static uint32_t retryAfterMs = 0;
 static bool ntpStarted = false;
 static bool authNvsReady = false;
+
+static String supabaseBaseUrl() {
+    String url = SUPABASE_PROJECT_URL;
+    while (url.endsWith("/")) url.remove(url.length() - 1);
+    return url;
+}
 
 static bool saveRefreshToken(const String &token) {
     if (!authNvsReady) return false;
@@ -59,20 +65,20 @@ static void loadRefreshToken() {
     nvs_close(handle);
 }
 
-static bool initializeEncryptedAuthNvs() {
+static bool initializeCloudAuthNvs() {
     if (!esp_flash_encryption_enabled()) {
-#if FIREBASE_REQUIRE_FLASH_ENCRYPTION
-        Serial.println("Firebase auth disabled: production requires ESP32 flash encryption");
+#if CLOUD_REQUIRE_FLASH_ENCRYPTION
+        Serial.println("Supabase auth disabled: production requires ESP32 flash encryption");
         return false;
 #else
-        Serial.println("WARNING: Firebase development mode; refresh token NVS is not protected by flash encryption");
+        Serial.println("WARNING: Supabase development mode; refresh-token NVS is not protected by flash encryption");
         const esp_err_t err = nvs_flash_init_partition(AUTH_NVS_PARTITION);
         if (err != ESP_OK && err != ESP_ERR_NVS_NO_FREE_PAGES && err != ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            Serial.printf("Firebase development NVS initialization failed (%d)\n", static_cast<int>(err));
+            Serial.printf("Supabase development NVS initialization failed (%d)\n", static_cast<int>(err));
             return false;
         }
         if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            Serial.println("Firebase auth NVS needs explicit erase/reprovisioning; refusing to erase tokens automatically");
+            Serial.println("Cloud auth NVS needs explicit erase/reprovisioning; refusing to erase tokens automatically");
             return false;
         }
         authNvsReady = true;
@@ -83,7 +89,7 @@ static bool initializeEncryptedAuthNvs() {
     const esp_partition_t *keyPartition = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS, NVS_KEYS_PARTITION);
     if (!keyPartition) {
-        Serial.println("Firebase auth disabled: encrypted NVS key partition is missing");
+        Serial.println("Supabase auth disabled: encrypted NVS key partition is missing");
         return false;
     }
 
@@ -93,22 +99,21 @@ static bool initializeEncryptedAuthNvs() {
         err = nvs_flash_generate_keys(keyPartition, &securityConfig);
     }
     if (err != ESP_OK) {
-        Serial.printf("Firebase auth disabled: NVS key setup failed (%d)\n", static_cast<int>(err));
+        Serial.printf("Supabase auth disabled: NVS key setup failed (%d)\n", static_cast<int>(err));
         return false;
     }
 
     err = nvs_flash_secure_init_partition(AUTH_NVS_PARTITION, &securityConfig);
     if (err != ESP_OK) {
-        Serial.printf("Firebase auth disabled: encrypted NVS initialization failed (%d)\n", static_cast<int>(err));
+        Serial.printf("Supabase auth disabled: encrypted NVS initialization failed (%d)\n", static_cast<int>(err));
         return false;
     }
     authNvsReady = true;
     return true;
 }
+
 static bool ensureClock() {
-    if (time(nullptr) >= VALID_CLOCK_EPOCH) {
-        return true;
-    }
+    if (time(nullptr) >= VALID_CLOCK_EPOCH) return true;
     if (!ntpStarted) {
         configTime(0, 0, "time.google.com", "pool.ntp.org");
         ntpStarted = true;
@@ -116,49 +121,28 @@ static bool ensureClock() {
 
     const uint32_t started = millis();
     while ((uint32_t)(millis() - started) < 10000) {
-        if (time(nullptr) >= VALID_CLOCK_EPOCH) {
-            return true;
-        }
+        if (time(nullptr) >= VALID_CLOCK_EPOCH) return true;
         delay(100);
     }
     return false;
 }
 
-static bool postAuthRequest(const String &url, const char *contentType,
-                            const String &body, String &response) {
+static bool postAuthRequest(const String &url, const String &body, String &response) {
     if (WiFi.status() != WL_CONNECTED || !ensureClock()) return false;
-    TrustedFirebaseClient client;
+    TrustedCloudClient client;
     if (!client.useSystemCertificateBundle()) {
-        Serial.println("Firebase auth paused: trusted certificate bundle is unavailable");
+        Serial.println("Supabase auth paused: trusted certificate bundle is unavailable");
         return false;
     }
     HTTPClient http;
     http.setTimeout(7000);
     if (!http.begin(client, url)) return false;
-    http.addHeader("Content-Type", contentType);
+    http.addHeader("apikey", SUPABASE_ANON_KEY);
+    http.addHeader("Content-Type", "application/json");
     const int code = http.POST(body);
     if (code > 0) response = http.getString();
     http.end();
     return code >= 200 && code < 300;
-}
-
-static String formEncode(const String &value) {
-    static const char HEX_DIGITS[] = "0123456789ABCDEF";
-    String encoded;
-    encoded.reserve(value.length() * 3);
-    for (size_t i = 0; i < value.length(); ++i) {
-        const uint8_t ch = static_cast<uint8_t>(value[i]);
-        const bool unreserved = (ch >= 'A' && ch <= 'Z') ||
-            (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
-            ch == '-' || ch == '_' || ch == '.' || ch == '~';
-        if (unreserved) encoded += static_cast<char>(ch);
-        else {
-            encoded += '%';
-            encoded += HEX_DIGITS[ch >> 4];
-            encoded += HEX_DIGITS[ch & 0x0F];
-        }
-    }
-    return encoded;
 }
 
 static void clearSavedRefreshToken() {
@@ -171,34 +155,29 @@ static void clearSavedRefreshToken() {
     nvs_close(handle);
 }
 
-static bool acceptTokenResponse(const String &response, const char *uidField) {
-    DynamicJsonDocument doc(1536);
+static bool acceptTokenResponse(const String &response) {
+    DynamicJsonDocument doc(4096);
     if (deserializeJson(doc, response)) return false;
 
-    const char *uid = doc[uidField] | "";
-    const char *idToken = doc["idToken"] | doc["id_token"] | "";
-    const char *refreshToken = doc["refreshToken"] | doc["refresh_token"] | "";
-    if (!uid[0] || !idToken[0] || !refreshToken[0]) return false;
+    const char *uid = doc["user"]["id"] | "";
+    const char *accessToken = doc["access_token"] | "";
+    const char *refreshToken = doc["refresh_token"] | "";
+    if (!uid[0] || !accessToken[0] || !refreshToken[0]) return false;
 
-    if (String(uid) != FIREBASE_DEVICE_UID) {
-        Serial.println("Firebase auth rejected: authenticated UID does not match device UID");
+    if (String(uid) != SUPABASE_DEVICE_UID) {
+        Serial.println("Supabase auth rejected: authenticated user UID does not match this device");
         clearSavedRefreshToken();
-        currentIdToken = "";
+        currentAccessToken = "";
         return false;
     }
 
-    JsonVariantConst expiry = doc["expiresIn"];
-    if (expiry.isNull()) expiry = doc["expires_in"];
-    const uint32_t expiresSeconds = expiry.is<const char *>()
-        ? static_cast<uint32_t>(strtoul(expiry.as<const char *>(), nullptr, 10))
-        : expiry.as<uint32_t>();
+    const uint32_t expiresSeconds = doc["expires_in"] | 0UL;
     if (expiresSeconds < 180) return false;
-
-    currentIdToken = idToken;
+    currentAccessToken = accessToken;
     currentRefreshToken = refreshToken;
     if (!saveRefreshToken(currentRefreshToken)) {
-        currentIdToken = "";
-        Serial.println("Firebase auth token not retained: encrypted NVS write failed");
+        currentAccessToken = "";
+        Serial.println("Supabase auth token not retained: cloud NVS write failed");
         return false;
     }
 
@@ -208,62 +187,72 @@ static bool acceptTokenResponse(const String &response, const char *uidField) {
     return true;
 }
 
+static bool configurationReady() {
+    return String(SUPABASE_PROJECT_URL).startsWith("https://") &&
+           String(SUPABASE_PROJECT_URL).indexOf("YOUR_PROJECT_REF") < 0 &&
+           !String(SUPABASE_ANON_KEY).startsWith("YOUR_") &&
+           !String(SUPABASE_DEVICE_EMAIL).startsWith("YOUR_") &&
+           !String(SUPABASE_DEVICE_PASSWORD).startsWith("YOUR_") &&
+           !String(SUPABASE_DEVICE_UID).startsWith("YOUR_");
+}
+
 static bool signInWithPassword() {
-    if (String(FIREBASE_API_KEY).startsWith("YOUR_") ||
-        String(FIREBASE_EMAIL).startsWith("YOUR_") ||
-        String(FIREBASE_PASSWORD).startsWith("YOUR_")) {
-        Serial.println("Firebase auth paused: local API key or device login is not configured");
+    if (!configurationReady()) {
+        Serial.println("Supabase auth paused: local project URL, publishable key, device login or UID is not configured");
         return false;
     }
 
     StaticJsonDocument<256> request;
-    request["email"] = FIREBASE_EMAIL;
-    request["password"] = FIREBASE_PASSWORD;
-    request["returnSecureToken"] = true;
+    request["email"] = SUPABASE_DEVICE_EMAIL;
+    request["password"] = SUPABASE_DEVICE_PASSWORD;
     String body;
     serializeJson(request, body);
 
     String response;
-    const String url = String("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=") + FIREBASE_API_KEY;
-    if (!postAuthRequest(url, "application/json", body, response)) return false;
-    return acceptTokenResponse(response, "localId");
+    const String url = supabaseBaseUrl() + "/auth/v1/token?grant_type=password";
+    if (!postAuthRequest(url, body, response)) return false;
+    return acceptTokenResponse(response);
 }
 
-static bool refreshIdToken() {
+static bool refreshAccessToken() {
     if (!currentRefreshToken.length()) return false;
-    const String body = String("grant_type=refresh_token&refresh_token=") + formEncode(currentRefreshToken);
-    const String url = String("https://securetoken.googleapis.com/v1/token?key=") + FIREBASE_API_KEY;
+    StaticJsonDocument<256> request;
+    request["refresh_token"] = currentRefreshToken;
+    String body;
+    serializeJson(request, body);
+
     String response;
-    if (!postAuthRequest(url, "application/x-www-form-urlencoded", body, response)) return false;
-    return acceptTokenResponse(response, "user_id");
+    const String url = supabaseBaseUrl() + "/auth/v1/token?grant_type=refresh_token";
+    if (!postAuthRequest(url, body, response)) return false;
+    return acceptTokenResponse(response);
 }
 
-void beginFirebaseAuth() {
-    if (initializeEncryptedAuthNvs()) loadRefreshToken();
+void beginSupabaseAuth() {
+    if (initializeCloudAuthNvs()) loadRefreshToken();
 }
 
-bool ensureFirebaseAuthentication() {
-    if (!FIREBASE_ENABLED || !authNvsReady || WiFi.status() != WL_CONNECTED) return false;
-    if (currentIdToken.length() && static_cast<int32_t>(millis() - refreshAtMs) < 0) return true;
+bool ensureSupabaseAuthentication() {
+    if (!SUPABASE_ENABLED || !authNvsReady || WiFi.status() != WL_CONNECTED) return false;
+    if (currentAccessToken.length() && static_cast<int32_t>(millis() - refreshAtMs) < 0) return true;
     if (retryAfterMs && static_cast<int32_t>(millis() - retryAfterMs) < 0) return false;
     if (!ensureClock()) {
         retryAfterMs = millis() + AUTH_RETRY_DELAY_MS;
         return false;
     }
 
-    currentIdToken = "";
-    bool ok = refreshIdToken();
+    currentAccessToken = "";
+    bool ok = refreshAccessToken();
     if (!ok) ok = signInWithPassword();
     if (!ok) retryAfterMs = millis() + AUTH_RETRY_DELAY_MS;
     return ok;
 }
 
-void invalidateFirebaseAuthentication() {
-    currentIdToken = "";
+void invalidateSupabaseAuthentication() {
+    currentAccessToken = "";
     refreshAtMs = 0;
     retryAfterMs = 0;
 }
 
-const String &firebaseIdToken() {
-    return currentIdToken;
+const String &supabaseAccessToken() {
+    return currentAccessToken;
 }
