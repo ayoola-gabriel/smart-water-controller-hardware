@@ -5,17 +5,22 @@ Included:
 - LED1/LED2 water-level encoding; LED3 pump-running indication.
 - NEO-6M UART baud set to 115200 and RX/TX pin mapping corrected to RX=GPIO2, TX=GPIO15 based on the user's successful diagnostic sketch.
 - Thermistor ADC count, node voltage and calculated resistance serial diagnostics.
-- NimBLE GATT service for status, pump commands, user profile and Wi-Fi provisioning.
+- NimBLE GATT service for status, pump commands, user profile and Wi-Fi provisioning. Bonding, Secure Connections, MITM and authenticated-encrypted characteristic permissions are enabled; failed pairing removes only that peer bond.
 - BLE characteristics require authenticated encrypted pairing; a local six-digit passkey is displayed on the LCD during pairing.
 - Wi-Fi-only Firebase RTDB REST transport over HTTPS using the ESP-IDF trusted certificate bundle.
 - Firebase email/password sign-in, authenticated UID verification and ID-token refresh flow.
-- Refresh token persistence in a dedicated encrypted NVS partition; Firebase auth fails closed until ESP32 flash encryption is enabled and provisioned.
-- Cloud transport runs in a low-priority worker so HTTP waits do not hold up the pump-control loop.
+- Refresh token persistence in `auth` NVS. Development builds allow Firebase Auth with a warning when flash encryption is off; production can require encryption with `FIREBASE_REQUIRE_FLASH_ENCRYPTION=1`.
+- Cloud transport, Wi-Fi web server/OTA handling, and GSM SMS work run in background workers so network waits do not hold up the pump-control loop.
 - Cloud commands require an ID and short expiry, are acknowledged before entering the control state, and the last processed ID is persisted to reject replays across restarts.
 - Persistent LittleFS JSONL telemetry queue, bounded size and batch upload.
 - Queue replacement uses temporary and backup files with startup recovery after interrupted swaps.
 - SIM800L remains SMS-only. No cellular internet path.
+- Real mode reads LOW/MID/FULL floats on GPIO36/34/35, with active-HIGH polarity confirmed by the user. Invalid patterns latch a sensor fault.
+- Central 20x4 LCD renderer updates only changed characters. Prototype current zero calibration is incremental and only accepted while the pump is OFF.
+- Partition table reserves 128 KB for core dumps and leaves 688 KB for LittleFS; first-use formatting is limited to a failed mount with no prior-mount marker.
+- GPS UART Serial2 parser task records raw NMEA and receive/checksum/fix diagnostics.
+- Max-runtime faults can recover after 60 seconds once demand clears; serious sensor/electrical faults remain manual-reset.
 
-Before cloud operation, copy the local configuration template, configure the Firebase API key/device login, back up LittleFS, flash the updated partition table and firmware over USB, provision ESP32 flash encryption, and verify Firebase rules. Bench-validate certificate-bundle TLS, auth, command expiry/acknowledgements and queue recovery before production deployment.
+Before cloud operation, copy the local configuration template and set the Firebase API key/device login and unique BLE passkey. Development configuration allows auth without flash encryption but leaves refresh tokens unencrypted; set `FIREBASE_REQUIRE_FLASH_ENCRYPTION=1` and complete device-security provisioning for production. Back up LittleFS and flash the updated partition table over USB before firmware.
 
-Validation limitation: PlatformIO build succeeds in this environment. This source has not been tested on physical hardware. BLE security/pairing, Firebase auth, TLS handshake, NVS encryption, batch queue recovery, thermistor calibration and pump behavior require bench validation. Do not treat this as production firmware yet.
+Validation limitation: PlatformIO build succeeds. The user reports prior hardware checks passed for firmware upload, supply, prototype water sensing, prototype AUTO pump, LEDs, basic LCD, thermistor measurement and Wi-Fi association. The new corrections have not yet been retested. Firebase auth/TLS, bond pairing, core-dump operation, fault recovery, GPS parser diagnostics and real-mode float/current behavior remain unverified. Do not proceed to real mains pump testing.
