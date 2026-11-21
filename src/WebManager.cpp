@@ -14,6 +14,7 @@ static WebServer server(WEB_PORT);
 static PumpMode webPumpMode = AUTO_MODE;
 static bool webManualPumpRequest = false;
 static bool webClearFault = false;
+static bool webCurrentCalibrationRequest = false;
 static bool wifiCredentialChangePending = false;
 static portMUX_TYPE wifiCredentialMux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t lastWifiRetryMs = 0;
@@ -128,6 +129,15 @@ static void registerRoutes() {
         }
         webClearFault = true;
         server.send(200, "application/json", "{\"accepted\":true}");
+    });
+
+    server.on("/api/current/calibrate", HTTP_POST, []() {
+        if (!authorized()) {
+            server.send(401, "application/json", "{\"error\":\"unauthorized\"}");
+            return;
+        }
+        webCurrentCalibrationRequest = true;
+        server.send(202, "application/json", "{\"accepted\":true,\"note\":\"calibration starts only when pump is OFF and mode is PROTOTYPE\"}");
     });
 
     // Browser-based OTA page. The API key is submitted as a query parameter
@@ -264,5 +274,10 @@ bool getWebManualPumpRequest() { return webManualPumpRequest; }
 bool consumeWebClearFaultRequest() {
     if (!webClearFault) return false;
     webClearFault = false;
+    return true;
+}
+bool consumeWebCurrentCalibrationRequest() {
+    if (!webCurrentCalibrationRequest) return false;
+    webCurrentCalibrationRequest = false;
     return true;
 }

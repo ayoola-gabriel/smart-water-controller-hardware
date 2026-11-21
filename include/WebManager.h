@@ -8,3 +8,4 @@ void publishWebStatus(const WaterData &water, const SystemStatus &status);
 PumpMode getWebPumpMode();
 bool getWebManualPumpRequest();
 bool consumeWebClearFaultRequest();
+bool consumeWebCurrentCalibrationRequest();

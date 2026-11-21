@@ -33,10 +33,11 @@ constexpr uint32_t TEMPERATURE_UPDATE_MS = 1000;
 constexpr float SHUNT_OHMS = 4.7f;
 constexpr float PROTOTYPE_ZERO_OFFSET_V_DEFAULT = 0.010f;
 
-// Real installation: ACS712-30A module. Assumes its output is divided by 1.5
-// before GPIO39 (e.g. 10k series / 20k to GND). Verify actual module output.
+// Real installation: ACS712-30A module. Its output is divided by 2.0 using
+// the tested 10k series / 10k to GND divider before GPIO39.
 constexpr float ACS712_SENSITIVITY_V_PER_A = 0.066f;
-constexpr float ACS712_DIVIDER_CORRECTION = 1.5f;
+constexpr float ACS712_DIVIDER_CORRECTION = 2.0f;
+constexpr uint8_t CURRENT_ADC_AVERAGE_SAMPLES = 8;
 constexpr bool ENABLE_OVERCURRENT_PROTECTION = false; // Calibrate before enabling.
 constexpr float PROTOTYPE_OVERCURRENT_A = 0.60f;
 constexpr float REAL_OVERCURRENT_A = 8.0f;
@@ -50,6 +51,8 @@ constexpr uint32_t MAX_PUMP_RUNTIME_MS = 30UL * 60UL * 1000UL;
 constexpr uint32_t PUMP_STARTUP_GRACE_MS = 3000;
 constexpr uint32_t CONTROL_UPDATE_MS = 50;
 constexpr uint32_t DISPLAY_UPDATE_MS = 1000;
+constexpr uint32_t CURRENT_CALIBRATION_SAMPLE_INTERVAL_MS = 3;
+constexpr uint16_t CURRENT_CALIBRATION_SAMPLE_COUNT = 300;
 constexpr uint32_t GSM_BAUD = 9600;
 constexpr uint32_t GPS_BAUD = 115200; // Confirmed by NEO-6M diagnostic.
 constexpr bool GPS_ENABLED = true;

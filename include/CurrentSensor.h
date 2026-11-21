@@ -2,6 +2,6 @@
 #include "Types.h"
 
 void beginCurrentSensor();
-void updateCurrentSensor(OperatingMode mode);
+void updateCurrentSensor(OperatingMode mode, SystemStatus &status);
 float getPumpCurrentA();
-bool calibrateCurrentZero(OperatingMode mode); // Prototype shunt only; call with pump OFF.
+bool calibrateCurrentZero(OperatingMode mode); // Starts nonblocking calibration; call with pump OFF.

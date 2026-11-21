@@ -1,20 +1,18 @@
 #include <Arduino.h>
 #include <WiFi.h>
-#include <LiquidCrystal.h>
 
 #include "AppConfig.h"
 #include "Hardware.h"
 #include "Types.h"
 #include "Sensors.h"
 #include "CurrentSensor.h"
+#include "DisplayManager.h"
 #include "Outputs.h"
 #include "PumpController.h"
 #include "GsmManager.h"
 #include "GpsManager.h"
 #include "WebManager.h"
 #include "RemoteManager.h"
-
-LiquidCrystal lcd(PIN_LCD_RS, PIN_LCD_EN, PIN_LCD_D4, PIN_LCD_D5, PIN_LCD_D6, PIN_LCD_D7);
 
 WaterData gWater;
 SystemStatus gStatus;
@@ -40,47 +38,6 @@ static const char *faultText(FaultType f) {
         case OVERCURRENT_FAULT: return "OVERCURRENT FAULT";
         case MAX_RUNTIME_FAULT: return "MAX RUNTIME FAULT";
         default: return "SYSTEM NORMAL";
-    }
-}
-
-static void updateLCD() {
-    lcd.setCursor(0, 0);
-    lcd.print("WATER CONTROLLER    ");
-
-    lcd.setCursor(0, 1);
-    if (gMode == PROTOTYPE_MODE) {
-        lcd.print("Level:");
-        lcd.print(gWater.levelPercent, 0);
-        lcd.print("%             ");
-    } else {
-        lcd.print("Level:");
-        if (gWater.highLevel) lcd.print("HIGH / FULL     ");
-        else if (gWater.lowLevel) lcd.print("LOW / REFILL     ");
-        else lcd.print("BETWEEN LIMITS   ");
-    }
-
-    lcd.setCursor(0, 2);
-    lcd.print("Pump:");
-    lcd.print(gStatus.pumpCommand ? "ON " : "OFF");
-    lcd.print(" I:");
-    lcd.print(gStatus.pumpCurrentA, 2);
-    lcd.print("A       ");
-
-    lcd.setCursor(0, 3);
-    if (isBlePairingPending()) {
-        lcd.print("BLE PAIR PIN: ");
-        char passkey[7];
-        snprintf(passkey, sizeof(passkey), "%06lu", static_cast<unsigned long>(getBlePairingPasskey()));
-        lcd.print(passkey);
-    } else {
-        lcd.print(gMode == PROTOTYPE_MODE ? "PROTO " : "REAL   ");
-        if (gStatus.temperatureValid) {
-            lcd.print("T:");
-            lcd.print(gStatus.temperatureC, 1);
-            lcd.print("C       ");
-        } else {
-            lcd.print("T:--.-C       ");
-        }
     }
 }
 
@@ -118,14 +75,7 @@ void setup() {
     beginTemperatureSensor();
     beginCurrentSensor();
 
-    lcd.begin(LCD_COLS, LCD_ROWS);
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("Water Controller");
-    lcd.setCursor(0, 1);
-    lcd.print("Starting...");
-    lcd.setCursor(0, 2);
-    lcd.print(gMode == PROTOTYPE_MODE ? "Prototype mode" : "Real mode");
+    beginDisplay();
 
     beginGsm();
     beginGps();
@@ -139,6 +89,7 @@ void setup() {
     setPumpOutput(false);
     gStatus.pumpCommand = false;
     gStatus.pumpState = PUMP_STOPPED;
+    renderDisplay(gWater, gStatus, gMode, isBlePairingPending(), getBlePairingPasskey());
 
     Serial.println();
     Serial.println("Smart Water Controller booted.");
@@ -166,7 +117,15 @@ void loop() {
 
     // Current sampler runs on every loop pass so the ACS712 gets a useful
     // waveform sampling rate for 50Hz RMS estimation.
-    updateCurrentSensor(gMode);
+    updateCurrentSensor(gMode, gStatus);
+
+    if (consumeWebCurrentCalibrationRequest()) {
+        if (gStatus.pumpCommand) {
+            Serial.println("Current zero calibration rejected: pump must be OFF");
+        } else if (!calibrateCurrentZero(gMode)) {
+            Serial.println("Current zero calibration unavailable outside idle prototype mode");
+        }
+    }
 
     if (consumeWebClearFaultRequest() || consumeBleClearFaultRequest()) {
         requestFaultClear();
@@ -202,7 +161,7 @@ void loop() {
 
     if (now - lastDisplayMs >= DISPLAY_UPDATE_MS) {
         lastDisplayMs = now;
-        updateLCD();
+        renderDisplay(gWater, gStatus, gMode, isBlePairingPending(), getBlePairingPasskey());
 
         Serial.printf(
             "Mode=%s Level=%.0f%% Valid=%d Pump=%s Current=%.3fA Temp=%s%.1fC Fault=%s WiFi=%s GSM=%s GPS=%s\n",
@@ -221,6 +180,9 @@ void loop() {
         Serial.printf("NTC: ADC=%u Node=%.3fV Rntc=%.0f ohm TempValid=%d\n",
             gStatus.temperatureRawAdc, gStatus.temperatureNodeV,
             gStatus.thermistorResistanceOhms, gStatus.temperatureValid);
+        Serial.printf("Current ADC: raw=%u averaged=%.3fV zero=%.3fV current=%.3fA\n",
+            gStatus.currentRawAdc, gStatus.currentAdcVoltage,
+            gStatus.currentZeroVoltage, gStatus.pumpCurrentA);
     }
 
     if (now - lastGpsDiagnosticMs >= 5000) {

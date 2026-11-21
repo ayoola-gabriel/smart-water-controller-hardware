@@ -14,12 +14,27 @@ static uint32_t windowStartMs = 0;
 static uint32_t sampleCount = 0;
 static double sumV = 0.0;
 static double sumV2 = 0.0;
+static bool calibrating = false;
+static double calibrationSumV = 0.0;
+static uint16_t calibrationSamples = 0;
+static uint32_t calibrationNextMs = 0;
+
+static float readAveragedAdcVoltage(uint16_t &rawAverage) {
+    uint32_t millivoltsSum = 0;
+    uint32_t rawSum = 0;
+    for (uint8_t i = 0; i < CURRENT_ADC_AVERAGE_SAMPLES; ++i) {
+        millivoltsSum += analogReadMilliVolts(PIN_PUMP_CURRENT);
+        rawSum += analogRead(PIN_PUMP_CURRENT);
+    }
+    rawAverage = static_cast<uint16_t>(rawSum / CURRENT_ADC_AVERAGE_SAMPLES);
+    return (millivoltsSum / static_cast<float>(CURRENT_ADC_AVERAGE_SAMPLES)) / 1000.0f;
+}
 
 void beginCurrentSensor() {
     pinMode(PIN_PUMP_CURRENT, INPUT);
     analogReadResolution(12);
     analogSetPinAttenuation(PIN_PUMP_CURRENT, ADC_11db);
-    (void)analogReadMilliVolts(PIN_PUMP_CURRENT); // discard first conversion after ADC setup
+    (void)analogReadMilliVolts(PIN_PUMP_CURRENT); // discard the first conversion after ADC setup
     prefsReady = prefs.begin("waterctl", false);
     if (!prefsReady) {
         Serial.println("Preferences unavailable; using default current-sensor calibration");
@@ -37,68 +52,86 @@ void beginCurrentSensor() {
     windowStartMs = millis();
 }
 
-void updateCurrentSensor(OperatingMode mode) {
+void updateCurrentSensor(OperatingMode mode, SystemStatus &status) {
+    const uint32_t nowMs = millis();
     const uint32_t nowUs = micros();
-    // Prototype DC current: frequent averaging; real ACS712: sample fast enough
-    // to capture the 50Hz AC waveform for RMS calculation.
     const uint32_t intervalUs = (mode == REAL_MODE) ? 500 : 1000;
-    if ((uint32_t)(nowUs - lastSampleUs) < intervalUs) return;
+    const bool calibrationDue = calibrating &&
+        (int32_t)(nowMs - calibrationNextMs) >= 0;
+    if (!calibrating && (uint32_t)(nowUs - lastSampleUs) < intervalUs) return;
+    if (calibrating && !calibrationDue) return;
     lastSampleUs = nowUs;
 
-    const float adcV = analogReadMilliVolts(PIN_PUMP_CURRENT) / 1000.0f;
-    if (mode == PROTOTYPE_MODE) {
-        sumV += adcV;
-        sampleCount++;
-        if ((uint32_t)(millis() - windowStartMs) >= 200 && sampleCount > 0) {
-            const float averageV = (float)(sumV / sampleCount);
-            const float shuntV = fmaxf(0.0f, averageV - prototypeZeroV);
-            currentA = shuntV / SHUNT_OHMS; // No LM358 amplifier in Revision 6.
+    status.currentAdcVoltage = readAveragedAdcVoltage(status.currentRawAdc);
+    status.currentZeroVoltage = mode == PROTOTYPE_MODE ? prototypeZeroV : 0.0f;
+
+    if (calibrating) {
+        calibrationSumV += status.currentAdcVoltage;
+        ++calibrationSamples;
+        calibrationNextMs = nowMs + CURRENT_CALIBRATION_SAMPLE_INTERVAL_MS;
+        if (calibrationSamples >= CURRENT_CALIBRATION_SAMPLE_COUNT) {
+            prototypeZeroV = static_cast<float>(calibrationSumV / calibrationSamples);
+            status.currentZeroVoltage = prototypeZeroV;
+            calibrationSumV = 0.0;
+            calibrationSamples = 0;
+            calibrating = false;
             sumV = 0.0;
             sumV2 = 0.0;
             sampleCount = 0;
-            windowStartMs = millis();
+            windowStartMs = nowMs;
+            currentA = 0.0f;
+            if (prefsReady && prefs.putFloat("protoZero", prototypeZeroV) == 0) {
+                Serial.println("Current zero calibration completed but could not be persisted");
+            } else {
+                Serial.printf("Prototype current zero calibrated: %.3f V\n", prototypeZeroV);
+            }
         }
+        status.pumpCurrentA = currentA;
         return;
     }
 
-    // ACS712 AC RMS: standard deviation of the sampled waveform, then undo
-    // the external divider ratio to recover sensor-output RMS voltage.
-    sumV += adcV;
-    sumV2 += (double)adcV * adcV;
-    sampleCount++;
-    if ((uint32_t)(millis() - windowStartMs) >= 200 && sampleCount > 50) {
-        const double mean = sumV / sampleCount;
-        double variance = (sumV2 / sampleCount) - (mean * mean);
-        if (variance < 0.0) variance = 0.0;
-        const float adcRmsV = sqrtf((float)variance);
-        const float sensorRmsV = adcRmsV * ACS712_DIVIDER_CORRECTION;
-        currentA = sensorRmsV / ACS712_SENSITIVITY_V_PER_A;
-        sumV = 0.0;
-        sumV2 = 0.0;
-        sampleCount = 0;
-        windowStartMs = millis();
+    const double adcV = status.currentAdcVoltage;
+    if (mode == PROTOTYPE_MODE) {
+        sumV += adcV;
+        ++sampleCount;
+        if ((uint32_t)(nowMs - windowStartMs) >= 200 && sampleCount > 0) {
+            const float averageV = static_cast<float>(sumV / sampleCount);
+            const float shuntV = fmaxf(0.0f, averageV - prototypeZeroV);
+            currentA = shuntV / SHUNT_OHMS; // Revision 6 has no LM358 amplifier.
+            sumV = 0.0;
+            sampleCount = 0;
+            windowStartMs = nowMs;
+        }
+    } else {
+        // ACS712 AC RMS: standard deviation over each 200ms window, then
+        // undo the measured 10k/10k voltage divider.
+        sumV += adcV;
+        sumV2 += adcV * adcV;
+        ++sampleCount;
+        if ((uint32_t)(nowMs - windowStartMs) >= 200 && sampleCount > 50) {
+            const double mean = sumV / sampleCount;
+            double variance = (sumV2 / sampleCount) - (mean * mean);
+            if (variance < 0.0) variance = 0.0;
+            const float adcRmsV = sqrtf(static_cast<float>(variance));
+            const float sensorRmsV = adcRmsV * ACS712_DIVIDER_CORRECTION;
+            currentA = sensorRmsV / ACS712_SENSITIVITY_V_PER_A;
+            sumV = 0.0;
+            sumV2 = 0.0;
+            sampleCount = 0;
+            windowStartMs = nowMs;
+        }
     }
+    status.pumpCurrentA = currentA;
 }
 
 float getPumpCurrentA() { return currentA; }
 
 bool calibrateCurrentZero(OperatingMode mode) {
-    if (mode != PROTOTYPE_MODE) return false;
-    // Call only with the pump physically OFF and mux selecting the shunt input.
-    const uint16_t n = 300;
-    double total = 0.0;
-    for (uint16_t i = 0; i < n; ++i) {
-        total += analogReadMilliVolts(PIN_PUMP_CURRENT) / 1000.0;
-        delay(3);
-    }
-    prototypeZeroV = (float)(total / n);
-    if (prefsReady && prefs.putFloat("protoZero", prototypeZeroV) == 0) {
-        Serial.println("Unable to persist prototype current zero calibration");
-    }
-    sumV = 0.0;
-    sumV2 = 0.0;
-    sampleCount = 0;
-    windowStartMs = millis();
-    currentA = 0.0f;
+    if (mode != PROTOTYPE_MODE || calibrating) return false;
+    calibrating = true;
+    calibrationSumV = 0.0;
+    calibrationSamples = 0;
+    calibrationNextMs = millis();
+    Serial.println("Prototype current zero calibration started; keep pump OFF");
     return true;
 }

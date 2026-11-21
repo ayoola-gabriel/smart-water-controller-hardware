@@ -31,6 +31,9 @@ struct SystemStatus {
     bool wifiConnected = false;
     bool gsmReady = false;
     float pumpCurrentA = 0.0f;
+    float currentAdcVoltage = 0.0f;
+    float currentZeroVoltage = 0.0f;
+    uint16_t currentRawAdc = 0;
     bool temperatureValid = false;
     float temperatureC = 0.0f;
     float temperatureNodeV = 0.0f;
