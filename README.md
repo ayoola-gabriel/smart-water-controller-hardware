@@ -67,7 +67,7 @@ All API routes require `?key=YOUR_API_KEY`.
 ## 7. Control and protection
 
 - Pump modes: AUTO, MANUAL and OFF.
-- AUTO starts when the LOW threshold requests refill and stops at FULL. Between thresholds, the prior pump state is retained.
+- AUTO starts in the below-LOW and LOW-only bands, retains the refill request at MID, and stops/clears the request at FULL.
 - MANUAL ON is still inhibited by invalid water-level data, FULL state, a latched fault and maximum runtime. OFF stops the pump.
 - Maximum runtime is 30 minutes by default.
 - Overcurrent and low-current trip features are present but disabled by default until the real pump and current measurement are calibrated. Configure thresholds in `AppConfig.h` only after testing.

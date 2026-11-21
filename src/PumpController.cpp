@@ -160,11 +160,11 @@ void updatePumpController(
         }
     } else {
         // Real-mode float switches use the same monotonic wet-level states as
-        // the prototype electrodes: below LOW starts refill, LOW/MID retain
-        // the refill latch, and FULL stops it.
+        // the prototype electrodes. Below LOW and the LOW-only band request
+        // refill, MID holds the existing request, and FULL clears/stops it.
         if (water.highLevel) {
             commandPump(false, status);
-        } else if (!water.lowLevel) {
+        } else if (!water.midLevel) {
             commandPump(true, status);
         }
     }
