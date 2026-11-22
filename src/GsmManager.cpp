@@ -26,23 +26,37 @@ static void setReady(bool value) {
     portEXIT_CRITICAL(&gsmStateMux);
 }
 
-static bool waitFor(const char *expected, uint32_t timeoutMs) {
+static bool waitFor(const char *expected, uint32_t timeoutMs, String *capturedResponse = nullptr) {
     String response;
     const uint32_t start = millis();
     while ((uint32_t)(millis() - start) < timeoutMs) {
         while (GSM.available()) {
-            response += static_cast<char>(GSM.read());
-            if (response.indexOf(expected) >= 0) return true;
+            if (response.length() < 256) response += static_cast<char>(GSM.read());
+            else (void)GSM.read();
+            if (response.indexOf(expected) >= 0) {
+                if (capturedResponse) *capturedResponse = response;
+                return true;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(2));
     }
+    if (capturedResponse) *capturedResponse = response;
     return false;
 }
 
 static bool sendCommand(const char *command, const char *expected, uint32_t timeoutMs) {
     while (GSM.available()) (void)GSM.read();
     GSM.println(command);
-    return waitFor(expected, timeoutMs);
+    String response;
+    const bool matched = waitFor(expected, timeoutMs, &response);
+    response.replace('\r', ' ');
+    response.replace('\n', ' ');
+    response.trim();
+    if (!response.length()) response = "<no response>";
+    Serial.printf("GSM init: TX [%s], RX [%s], expected [%s]: %s\n",
+                  command, response.c_str(), expected,
+                  matched ? "matched" : "timeout");
+    return matched;
 }
 
 static bool sendSms(const char *message) {
@@ -64,6 +78,9 @@ static bool initializeModem() {
     digitalWrite(PIN_GSM_RESET, HIGH);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
+    Serial.printf("GSM UART: baud=%lu ESP32_RX=GPIO%d ESP32_TX=GPIO%d reset=GPIO%u\n",
+                  static_cast<unsigned long>(GSM_BAUD), PIN_GSM_RX, PIN_GSM_TX,
+                  static_cast<unsigned>(PIN_GSM_RESET));
     GSM.begin(GSM_BAUD, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
     vTaskDelay(pdMS_TO_TICKS(500));
     if (!sendCommand("AT", "OK", 2000)) return false;
