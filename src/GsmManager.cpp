@@ -4,7 +4,7 @@
 #include "AppConfig.h"
 #include "GsmManager.h"
 
-static HardwareSerial GSM(1);
+static HardwareSerial GSM(2); // Use UART2 for SIM800L; ESP32 RX GPIO16, TX GPIO17.
 static portMUX_TYPE gsmStateMux = portMUX_INITIALIZER_UNLOCKED;
 static QueueHandle_t gsmAlertQueue = nullptr;
 static bool ready = false;
@@ -82,11 +82,23 @@ static bool initializeModem() {
                   static_cast<unsigned long>(GSM_BAUD), PIN_GSM_RX, PIN_GSM_TX,
                   static_cast<unsigned>(PIN_GSM_RESET));
     GSM.begin(GSM_BAUD, SERIAL_8N1, PIN_GSM_RX, PIN_GSM_TX);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    if (!sendCommand("AT", "OK", 2000)) return false;
+    // The successful standalone SIM800L test allowed three seconds after UART
+    // startup. Give the modem the same boot/baud-detection interval here.
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    bool atReady = false;
+    for (uint8_t attempt = 1; attempt <= 5 && !atReady; ++attempt) {
+        Serial.printf("GSM: AT handshake attempt %u/5\n", attempt);
+        atReady = sendCommand("AT", "OK", 2000);
+        if (!atReady) vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    if (!atReady) return false;
     sendCommand("ATE0", "OK", 1000);
     sendCommand("AT+CMGF=1", "OK", 1000);
     sendCommand("AT+CSCS=\"GSM\"", "OK", 1000);
+    // Read-only diagnostics: deliberately do not query/log the SIM CCID/IMSI.
+    sendCommand("AT+CSQ", "OK", 1500);
+    sendCommand("AT+CREG?", "OK", 1500);
+    sendCommand("AT+CBC", "OK", 1500);
     return true;
 }
 
