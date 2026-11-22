@@ -25,8 +25,8 @@ static void gpsReaderTask(void *) {
     uint32_t receivedCharacterCount = 0;
 
     for (;;) {
-        while (Serial2.available() > 0) {
-            const char c = static_cast<char>(Serial2.read());
+        while (Serial1.available() > 0) {
+            const char c = static_cast<char>(Serial1.read());
             ++receivedCharacterCount;
             gps.encode(c);
 
@@ -71,7 +71,7 @@ static void gpsReaderTask(void *) {
 
 void beginGps() {
     if (!GPS_ENABLED) return;
-    Serial2.begin(GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
+    Serial1.begin(GPS_BAUD, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
     gpsTaskStarted = xTaskCreatePinnedToCore(
         gpsReaderTask, "swc-gps", 4096, nullptr, 1, nullptr, 1) == pdPASS;
     if (!gpsTaskStarted) Serial.println("GPS parser task could not start");
