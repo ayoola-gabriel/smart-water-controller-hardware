@@ -83,6 +83,8 @@ constexpr char ALERT_PHONE_NUMBER[] = "+234XXXXXXXXXX";
 constexpr bool WIFI_ENABLED = true;
 constexpr uint16_t WEB_PORT = 80;
 constexpr uint32_t BUZZER_TOGGLE_MS = 250;
+constexpr uint32_t BUZZER_MAX_DURATION_MS = 60000;
+constexpr uint32_t FAULT_LED_TOGGLE_MS = 250;
 
 
 // Cloud / BLE configuration. Supabase credentials are supplied by ignored local_config.h.

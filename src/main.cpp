@@ -25,9 +25,13 @@ static uint32_t lastDisplayMs = 0;
 static uint32_t lastGpsDiagnosticMs = 0;
 static bool manualPumpRequest = false;
 
-void requestFaultClear() {
-    if (!gWater.levelValid || gStatus.pumpCommand) return;
+bool requestFaultClear() {
+    if (!gWater.levelValid || gStatus.pumpCommand) {
+        Serial.println("Fault clear rejected locally: water-level reading must be valid and pump must be stopped");
+        return false;
+    }
     clearLatchedFault(gStatus);
+    return true;
 }
 
 static const char *faultText(FaultType f) {
@@ -126,7 +130,12 @@ void loop() {
         }
     }
 
-    if (consumeWebClearFaultRequest() || consumeBleClearFaultRequest()) {
+    const bool webClearFaultRequested = consumeWebClearFaultRequest();
+    const bool bleClearFaultRequested = consumeBleClearFaultRequest();
+    const bool cloudClearFaultRequested = consumeCloudClearFaultRequest();
+    const bool clearFaultRequested = webClearFaultRequested ||
+        bleClearFaultRequested || cloudClearFaultRequested;
+    if (clearFaultRequested) {
         requestFaultClear();
     }
 
@@ -163,7 +172,7 @@ void loop() {
         renderDisplay(gWater, gStatus, gMode, isBlePairingPending(), getBlePairingPasskey());
 
         Serial.printf(
-            "Mode=%s Level=%.0f%% Valid=%d Pump=%s Current=%.3fA Temp=%s%.1fC Fault=%s WiFi=%s GSM=%s GPS=%s\n",
+            "Mode=%s Level=%.0f%% Valid=%d Pump=%s Current=%.3fA Temp=%s%.1fC Fault=%s WiFi=%s GSM=%s GPS=%s\n\n",
             gMode == PROTOTYPE_MODE ? "PROTOTYPE" : "REAL",
             gWater.levelPercent,
             gWater.levelValid,
@@ -176,12 +185,12 @@ void loop() {
             gsmIsReady() ? "READY" : "NOT_READY",
             gStatus.gpsValid ? "FIX" : "NO_FIX"
         );
-        Serial.printf("NTC: ADC=%u Node=%.3fV Rntc=%.0f ohm TempValid=%d\n",
-            gStatus.temperatureRawAdc, gStatus.temperatureNodeV,
-            gStatus.thermistorResistanceOhms, gStatus.temperatureValid);
-        Serial.printf("Current ADC: raw=%u averaged=%.3fV zero=%.3fV current=%.3fA\n",
-            gStatus.currentRawAdc, gStatus.currentAdcVoltage,
-            gStatus.currentZeroVoltage, gStatus.pumpCurrentA);
+        // Serial.printf("NTC: ADC=%u Node=%.3fV Rntc=%.0f ohm TempValid=%d\n",
+        //     gStatus.temperatureRawAdc, gStatus.temperatureNodeV,
+        //     gStatus.thermistorResistanceOhms, gStatus.temperatureValid);
+        // Serial.printf("Current ADC: raw=%u averaged=%.3fV zero=%.3fV current=%.3fA\n",
+        //     gStatus.currentRawAdc, gStatus.currentAdcVoltage,
+        //     gStatus.currentZeroVoltage, gStatus.pumpCurrentA);
     }
 
     if (now - lastGpsDiagnosticMs >= 5000) {
@@ -196,11 +205,78 @@ void loop() {
                 ? static_cast<unsigned long>(now - gStatus.gpsLastLocationUpdateMs)
                 : 0UL);
         char nmea[128];
-        if (consumeGpsNmeaLine(nmea, sizeof(nmea))) Serial.printf("GPS NMEA: %s", nmea);
+        if (consumeGpsNmeaLine(nmea, sizeof(nmea))) Serial.printf("GPS NMEA: %s\n", nmea);
     }
 
     delay(1);
 }
 
+
+
+
+// #include <Arduino.h>
+
+// void updateSerial();
+// void test_sim800_module();
+// void send_SMS();
+
+// void setup() {
+//   Serial.begin(115200);
+//   Serial2.begin(9600, SERIAL_8N1, 16, 17); // RX, TX
+//   Serial.println("SIM800L Test");
+//   delay(3000);
+//   test_sim800_module();
+//   send_SMS();
+// }
+
+// void loop() {
+//   updateSerial();
+// }
+
+
+// void test_sim800_module()
+// {
+//   Serial2.println("AT");
+//   updateSerial();
+//   Serial.println();
+//   Serial2.println("AT+CSQ");
+//   updateSerial();
+//   Serial2.println("AT+CCID");
+//   updateSerial();
+//   Serial2.println("AT+CREG?");
+//   updateSerial();
+//   Serial2.println("ATI");
+//   updateSerial();
+//   Serial2.println("AT+CBC");
+//   updateSerial();
+// }
+
+
+// void updateSerial()
+// {
+//   delay(500);
+//   while (Serial.available())
+//   {
+//     Serial2.write(Serial.read());//Forward what Serial received to Software Serial Port
+//   }
+//   while (Serial2.available())
+//   {
+//     Serial.write(Serial2.read());//Forward what Software Serial received to Serial Port
+//   }
+// }
+
+
+// void send_SMS()
+// {
+//   Serial2.println("AT+CMGF=1"); // Configuring TEXT mode
+//   updateSerial();
+//   Serial2.println("AT+CMGS=\"+919804049270\"");//change ZZ with country code and xxxxxxxxxxx with phone number to sms
+//   updateSerial();
+//   Serial2.print("Circuit Digest"); //text content
+//   updateSerial();
+// Serial.println();
+//   Serial.println("Message Sent");
+//   Serial2.write(26);
+// }
 
 

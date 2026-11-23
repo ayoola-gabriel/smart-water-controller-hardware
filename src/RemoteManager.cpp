@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <esp_heap_caps.h>
 #include <cstring>
+#include <cmath>
 #include <time.h>
 #include <NimBLEDevice.h>
 #include "AppConfig.h"
@@ -29,6 +30,22 @@ static const char *STATUS_TABLE_PATH = "/rest/v1/device_status";
 static const char *HISTORY_TABLE_PATH = "/rest/v1/telemetry_history";
 static const char *COMMAND_TABLE_PATH = "/rest/v1/device_commands";
 
+// Version 1 BLE telemetry packet. Keep it within the default ATT notification
+// payload (20 bytes) because browser BLE clients cannot explicitly request MTU.
+// Numeric values are little-endian; coordinates use signed degrees * 1e6.
+struct __attribute__((packed)) BleStatusPacketV1 {
+    uint8_t version;
+    uint8_t flags; // bit0 level valid, 1 low, 2 mid, 3 full, 4 pump, 5 temp valid, 6 Wi-Fi, 7 GPS valid
+    uint8_t levelPercent;
+    int16_t temperatureDeciC;
+    uint16_t currentMilliA;
+    uint8_t fault;
+    uint8_t pumpMode; // 0 AUTO, 1 MANUAL, 2 OFF
+    int32_t latitudeE6;
+    int32_t longitudeE6;
+};
+static_assert(sizeof(BleStatusPacketV1) == 17, "BLE status packet must fit the default ATT MTU");
+
 static NimBLECharacteristic *statusCharacteristic = nullptr;
 static PumpMode bleMode = AUTO_MODE;
 static bool bleManualPump = false;
@@ -38,6 +55,7 @@ static bool blePairingPending = false;
 static PumpMode cloudMode = AUTO_MODE;
 static bool cloudManualPump = false;
 static bool cloudControlActive = false;
+static bool cloudClearFaultRequested = false;
 static uint32_t lastNotify = 0;
 static uint32_t recordSequence = 0;
 static bool fsReady = false;
@@ -416,6 +434,9 @@ static void processCloudCommand(const String &payload) {
     const uint32_t expiresAt = expires.as<uint32_t>();
     String mode = command["mode"] | "";
     mode.toUpperCase();
+    const bool clearFault = command["clear_fault"].is<bool>()
+        ? command["clear_fault"].as<bool>()
+        : (command["clearFault"].is<bool>() && command["clearFault"].as<bool>());
     PumpMode newMode = AUTO_MODE;
     bool newManualPump = false;
     const char *reason = "invalid_command";
@@ -426,6 +447,8 @@ static void processCloudCommand(const String &payload) {
     else if (expiresAt <= static_cast<uint32_t>(now)) reason = "expired";
     else if (static_cast<uint32_t>(now) > issuedAt &&
              static_cast<uint32_t>(now) - issuedAt > CLOUD_COMMAND_MAX_AGE_SEC) reason = "too_old";
+    else if (clearFault && mode == "OFF") reason = nullptr;
+    else if (clearFault) reason = "invalid_clear_fault_mode";
     else if (mode == "AUTO") { newMode = AUTO_MODE; reason = nullptr; }
     else if (mode == "OFF") { newMode = PUMP_OFF_MODE; reason = nullptr; }
     else if (mode == "MANUAL" && command["pump"].is<bool>()) {
@@ -448,16 +471,20 @@ static void processCloudCommand(const String &payload) {
 
     if (accepted) {
         portENTER_CRITICAL(&commandMux);
-        cloudMode = newMode;
-        cloudManualPump = newManualPump;
-        cloudControlActive = true;
+        if (clearFault) {
+            cloudClearFaultRequested = true;
+        } else {
+            cloudMode = newMode;
+            cloudManualPump = newManualPump;
+            cloudControlActive = true;
+        }
         portEXIT_CRITICAL(&commandMux);
     }
 }
 
 static void pollSupabaseCommand() {
     const String url = supabaseUrl(String(COMMAND_TABLE_PATH) +
-        "?select=command_id,issued_at,expires_at,mode,pump" \
+        "?select=command_id,issued_at,expires_at,mode,pump,clear_fault" \
         "&device_id=eq." + DEVICE_ID + "&status=eq.pending&order=issued_at.asc&limit=1");
     String response;
     if (supabaseRequest(url, "GET", "", response)) processCloudCommand(response);
@@ -583,14 +610,30 @@ void updateRemoteManager(const WaterData &water, SystemStatus &status) {
     const uint32_t now = millis();
     if (statusCharacteristic && now - lastNotify >= 2000) {
         lastNotify = now;
-        StaticJsonDocument<512> doc;
-        doc["levelValid"] = water.levelValid; doc["levelPercent"] = water.levelPercent;
-        doc["low"] = water.lowLevel; doc["mid"] = water.midLevel; doc["full"] = water.fullLevel;
-        doc["pump"] = status.pumpCommand; doc["temperatureValid"] = status.temperatureValid;
-        if (status.temperatureValid) doc["temperatureC"] = status.temperatureC;
-        doc["currentA"] = status.pumpCurrentA; doc["fault"] = static_cast<int>(status.fault);
-        doc["wifi"] = WiFi.status() == WL_CONNECTED;
-        String json; serializeJson(doc, json); statusCharacteristic->setValue(json.c_str());
+        BleStatusPacketV1 packet{};
+        packet.version = 1;
+        packet.flags = (water.levelValid ? 1u << 0 : 0u) |
+                       (water.lowLevel ? 1u << 1 : 0u) |
+                       (water.midLevel ? 1u << 2 : 0u) |
+                       (water.fullLevel ? 1u << 3 : 0u) |
+                       (status.pumpCommand ? 1u << 4 : 0u) |
+                       (status.temperatureValid ? 1u << 5 : 0u) |
+                       (WiFi.status() == WL_CONNECTED ? 1u << 6 : 0u) |
+                       (status.gpsValid ? 1u << 7 : 0u);
+        const float safeLevel = water.levelPercent < 0.0f ? 0.0f :
+                                water.levelPercent > 100.0f ? 100.0f : water.levelPercent;
+        packet.levelPercent = static_cast<uint8_t>(safeLevel + 0.5f);
+        packet.temperatureDeciC = status.temperatureValid
+            ? static_cast<int16_t>(std::lround(status.temperatureC * 10.0f)) : 0;
+        const float safeCurrent = status.pumpCurrentA < 0.0f ? 0.0f : status.pumpCurrentA;
+        packet.currentMilliA = static_cast<uint16_t>(std::lround(safeCurrent * 1000.0f));
+        packet.fault = static_cast<uint8_t>(status.fault);
+        packet.pumpMode = static_cast<uint8_t>(status.pumpMode);
+        if (status.gpsValid) {
+            packet.latitudeE6 = static_cast<int32_t>(std::lround(status.gpsLatitude * 1000000.0));
+            packet.longitudeE6 = static_cast<int32_t>(std::lround(status.gpsLongitude * 1000000.0));
+        }
+        statusCharacteristic->setValue(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
         statusCharacteristic->notify();
     }
     static uint32_t lastSnapshot = 0;
@@ -610,5 +653,6 @@ bool consumeBleClearFaultRequest() { portENTER_CRITICAL(&commandMux); bool v = b
 PumpMode getCloudPumpMode() { portENTER_CRITICAL(&commandMux); PumpMode v = cloudMode; portEXIT_CRITICAL(&commandMux); return v; }
 bool getCloudManualPumpRequest() { portENTER_CRITICAL(&commandMux); bool v = cloudManualPump; portEXIT_CRITICAL(&commandMux); return v; }
 bool isCloudControlActive() { portENTER_CRITICAL(&commandMux); bool v = cloudControlActive; portEXIT_CRITICAL(&commandMux); return v; }
+bool consumeCloudClearFaultRequest() { portENTER_CRITICAL(&commandMux); bool v = cloudClearFaultRequested; cloudClearFaultRequested = false; portEXIT_CRITICAL(&commandMux); return v; }
 bool isBlePairingPending() { portENTER_CRITICAL(&commandMux); bool v = blePairingPending; portEXIT_CRITICAL(&commandMux); return v; }
 uint32_t getBlePairingPasskey() { return BLE_PAIRING_PASSKEY; }

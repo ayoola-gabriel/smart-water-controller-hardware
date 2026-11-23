@@ -5,3 +5,7 @@
 .vscode/ipch
 include/local_config.h
 include/firebase_secrets.h
+python_script/
+.env
+.venv/
+.vscode/

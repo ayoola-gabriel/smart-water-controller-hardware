@@ -25,9 +25,9 @@ constexpr int PIN_GSM_RX = 16;
 constexpr int PIN_GSM_TX = 17;
 constexpr uint8_t PIN_GSM_RESET = 18;
 
-// NEO-6M module TX -> ESP32 RX GPIO2; module RX <- ESP32 TX GPIO15.
-constexpr int PIN_GPS_RX = 2;
-constexpr int PIN_GPS_TX = 15;
+// NEO-6M module TX -> ESP32 RX GPIO15; module RX <- ESP32 TX GPIO2.
+constexpr int PIN_GPS_RX = 15;
+constexpr int PIN_GPS_TX = 2;
 
 // Shared level inputs: wire electrodes in prototype mode; float switches in real mode.
 constexpr uint8_t PIN_SENSOR_COMMON = 32; // Pulsed 3V3 in prototype; steady 3V3 in real mode.

@@ -10,5 +10,6 @@ bool consumeBleClearFaultRequest();
 PumpMode getCloudPumpMode();
 bool getCloudManualPumpRequest();
 bool isCloudControlActive();
+bool consumeCloudClearFaultRequest();
 bool isBlePairingPending();
 uint32_t getBlePairingPasskey();
